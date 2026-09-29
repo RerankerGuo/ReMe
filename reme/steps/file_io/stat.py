@@ -1,9 +1,11 @@
 """``file_stat`` — peek at file metadata under the workspace without copying it.
 
-Cheap inspection alternative to ``file_download``: the agent gets
-size and mtime in the answer, with mime type and (for markdown files)
-the parsed frontmatter alongside in metadata — enough to decide whether
-to download / parse / skip without paying the copy cost.
+Cheap inspection alternative to ``file_download``. The answer carries the
+path, type, size and mtime, and the answer is all an MCP caller receives:
+MCP returns only ``response.answer``. ``mime`` and, for markdown files,
+the parsed frontmatter stay in ``metadata`` with the rest of the envelope,
+so they reach direct ``Response`` consumers but never an MCP caller — an
+agent that needs the frontmatter must read the file, not stat it.
 
 Returns a uniform envelope:
 
