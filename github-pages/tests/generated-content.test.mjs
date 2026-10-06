@@ -90,37 +90,21 @@ test("publishes Studio screenshots with site-safe links", async () => {
 });
 
 test("publishes OpenClaw and Hermes integration figures with site-safe links", async () => {
-  const openclawEnglish = await readFile(path.join(generatedDir, "en/integrations/openclaw.md"), "utf8");
-  const openclawChinese = await readFile(path.join(generatedDir, "zh/integrations/openclaw.md"), "utf8");
-  for (const page of [openclawEnglish, openclawChinese]) {
-    assert.match(page, /\(\/figures\/openclaw\/status-overview\.png\)/);
-    assert.doesNotMatch(page, /\]\(\.\/figures\//);
-  }
-  for (const name of [
-    "status-overview.png",
-    "plugin-installed.png",
-    "plugin-configuration.png",
-    "memory-search.png",
-    "auto-dream.png",
-    "automatic-recall.png",
-    "conversation-memory.png",
+  for (const [page, integration] of [
+    ["en/integrations/openclaw.md", "openclaw"],
+    ["zh/integrations/openclaw.md", "openclaw"],
+    ["en/integrations/hermes.md", "hermes"],
   ]) {
-    await access(path.join(generatedDir, "public/figures/openclaw", name));
+    const content = await readFile(path.join(generatedDir, page), "utf8");
+    const images = [...content.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)];
+    assert.ok(images.length, `${page}: screenshots must exist`);
+    for (const [, source] of images) {
+      assert.ok(source.startsWith(`/figures/${integration}/`), `${page}: ${source}`);
+      await access(path.join(generatedDir, "public", source.slice(1)));
+    }
   }
-
   const hermesEnglish = await readFile(path.join(generatedDir, "en/integrations/hermes.md"), "utf8");
-  assert.match(hermesEnglish, /\(\/figures\/hermes\/hermes-provider-settings\.png\)/);
   assert.match(hermesEnglish, /\(\/zh\/integrations\/hermes\)/);
-  assert.doesNotMatch(hermesEnglish, /\]\(figures\//);
-  for (const name of [
-    "hermes-provider-settings.png",
-    "hermes-http-sessions.png",
-    "hermes-http-recall.png",
-    "hermes-reme-daily-note.png",
-    "hermes-embedded-recall.png",
-  ]) {
-    await access(path.join(generatedDir, "public/figures/hermes", name));
-  }
 });
 
 test("keeps Studio source READMEs portable for package registries", async () => {
@@ -176,9 +160,11 @@ test("tracks every generated input in documentation CI and deployment", async ()
     "reme/config/default.yaml",
     "integrations/claude_code/README.md",
     "integrations/hermes_agent/README.md",
+    "integrations/hermes_agent/figures/**",
     "integrations/dsh/README*.md",
     "integrations/dsh/figures/**",
     "integrations/openclaw/README*.md",
+    "integrations/openclaw/figures/**",
     "reme_studio/**",
     "benchmark/toolmemory/gitcha.png",
   ];
