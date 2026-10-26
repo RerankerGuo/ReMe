@@ -10,33 +10,18 @@ probed path in not-found errors instead of the caller's raw input.
 
 # pylint: disable=protected-access
 
-import os
+from contextlib import chdir as temp_chdir
 import tempfile
 from datetime import date
 from pathlib import Path
 
+import frontmatter
 import pytest
 
 from reme.components.file_store import LocalFileStore
 from reme.steps.file_io.frontmatter_delete import FrontmatterDeleteStep
 from reme.steps.file_io.frontmatter_read import FrontmatterReadStep
 from reme.steps.file_io.frontmatter_update import FrontmatterUpdateStep
-
-
-class temp_chdir:
-    """Context manager to temporarily chdir into a path and restore on exit."""
-
-    def __init__(self, path):
-        self.path = path
-        self.old = None
-
-    def __enter__(self):
-        self.old = os.getcwd()
-        os.chdir(self.path)
-        return self
-
-    def __exit__(self, *exc):
-        os.chdir(self.old)
 
 
 def _seed(workspace: Path, rel: str, body: str) -> Path:
@@ -77,6 +62,23 @@ async def test_read_no_suffix_autoappends_md():
 
 
 @pytest.mark.asyncio
+async def test_read_honors_injected_path_scope():
+    """An injected allowed-path scope denies frontmatter reads outside of it."""
+    with tempfile.TemporaryDirectory() as tmp, temp_chdir(tmp):
+        _seed(Path(tmp), NOTE, BODY)
+        store = await _make_store()
+
+        allowed = await _run(FrontmatterReadStep, store, path=NOTE, _allowed_paths=[NOTE])
+        assert allowed.success is True
+        assert allowed.metadata["frontmatter"] == {"name": "n", "tags": ["a"]}
+
+        denied = await _run(FrontmatterReadStep, store, path=NOTE, _allowed_paths=["notes/other.md"])
+        assert denied.success is False
+        assert denied.metadata["error"] == "no permission to access this file"
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_update_no_suffix_autoappends_md():
     """frontmatter_update on a suffix-less path resolves to the ``.md`` file."""
     with tempfile.TemporaryDirectory() as tmp, temp_chdir(tmp):
@@ -87,6 +89,58 @@ async def test_update_no_suffix_autoappends_md():
         assert resp.metadata["updated"] == {"name": "renamed"}
         assert resp.metadata["resolved_path"] == "notes/post.md"
         assert "name: renamed" in note.read_text(encoding="utf-8")
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_update_honors_injected_frontmatter_key_scope():
+    """Injected key scope rejects the entire update when any key is outside it."""
+    with tempfile.TemporaryDirectory() as tmp, temp_chdir(tmp):
+        note = _seed(Path(tmp), NOTE, BODY)
+        store = await _make_store()
+
+        before = note.read_bytes()
+        resp = await _run(
+            FrontmatterUpdateStep,
+            store,
+            path=NOTE,
+            metadata={"tags": ["new"], "name": "renamed"},
+            _allowed_frontmatter_keys=["tags"],
+        )
+        assert resp.success is False
+        assert resp.metadata["error"] == "frontmatter key(s) not allowed: 'name'"
+        assert note.read_bytes() == before
+
+        resp = await _run(
+            FrontmatterUpdateStep,
+            store,
+            path=NOTE,
+            metadata={"tags": ["new"]},
+            _allowed_frontmatter_keys=["tags"],
+        )
+        assert resp.success is True
+        assert frontmatter.loads(note.read_text(encoding="utf-8")).metadata == {"name": "n", "tags": ["new"]}
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_update_empty_frontmatter_key_scope_denies_all_updates():
+    """An empty injected list is restrictive, unlike an omitted constraint."""
+    with tempfile.TemporaryDirectory() as tmp, temp_chdir(tmp):
+        note = _seed(Path(tmp), NOTE, BODY)
+        store = await _make_store()
+        before = note.read_bytes()
+
+        resp = await _run(
+            FrontmatterUpdateStep,
+            store,
+            path=NOTE,
+            metadata={"tags": ["new"]},
+            _allowed_frontmatter_keys=[],
+        )
+
+        assert resp.success is False
+        assert note.read_bytes() == before
         await store.close()
 
 

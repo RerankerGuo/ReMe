@@ -15,6 +15,7 @@ test("generates every required bilingual guide", async () => {
     "overview.md",
     "configuration.md",
     "services.md",
+    "docker.md",
     "operations.md",
     "integrations.md",
     "plugin_development.md",
@@ -27,6 +28,8 @@ test("generates every required bilingual guide", async () => {
   }
   await access(path.join(generatedDir, "zh/integrations/claude-code.md"));
   await access(path.join(generatedDir, "en/integrations/claude-code.md"));
+  await access(path.join(generatedDir, "en/integrations/codex.md"));
+  await access(path.join(generatedDir, "zh/integrations/codex.md"));
   await access(path.join(generatedDir, "zh/integrations/hermes.md"));
   await access(path.join(generatedDir, "en/integrations/hermes.md"));
   await access(path.join(generatedDir, "zh/integrations/dsh.md"));
@@ -34,16 +37,22 @@ test("generates every required bilingual guide", async () => {
   await access(path.join(generatedDir, "zh/integrations/openclaw.md"));
   await access(path.join(generatedDir, "en/integrations/openclaw.md"));
   await access(path.join(generatedDir, "public/figures/dsh/reme-status-overview.png"));
+  await access(path.join(generatedDir, "public/figures/studio/studio-overview.png"));
+  for (const name of ["qwenpaw.png", "deepseek-harness.svg", "openclaw.svg", "claude-code.png", "hermes.svg", "zvec.ico", "faiss.png"]) {
+    await access(path.join(generatedDir, "public/ecosystem", name));
+  }
 });
 
 test("maps mirrored pages back to their canonical repository sources", async () => {
   const sourceMap = JSON.parse(await readFile(path.join(generatedDir, ".source-map.json"), "utf8"));
   assert.equal(sourceMap["zh/overview.md"], "README_ZH.md");
   assert.equal(sourceMap["en/overview.md"], "README.md");
-  assert.equal(sourceMap["zh/integrations/typescript.md"], "typescript/README_ZH.md");
-  assert.equal(sourceMap["en/integrations/dsh.md"], "typescript/docs/dsh.md");
-  assert.equal(sourceMap["zh/integrations/openclaw.md"], "typescript/docs/openclaw.zh-CN.md");
+  assert.equal(sourceMap["en/integrations/dsh.md"], "integrations/dsh/README.md");
+  assert.equal(sourceMap["zh/integrations/openclaw.md"], "integrations/openclaw/README_ZH.md");
   assert.equal(sourceMap["en/integrations/claude-code.md"], "integrations/claude_code/README.md");
+  assert.equal(sourceMap["zh/integrations/claude-code.md"], "integrations/claude_code/README_ZH.md");
+  assert.equal(sourceMap["en/integrations/codex.md"], "integrations/codex/README.md");
+  assert.equal(sourceMap["zh/integrations/codex.md"], "integrations/codex/README_ZH.md");
   assert.equal(sourceMap["en/integrations/hermes.md"], "integrations/hermes_agent/README.md");
   assert.equal(sourceMap["en/workspace/studio.md"], "reme_studio/README.md");
   assert.equal(sourceMap["zh/plugins/lme.md"], "plugins/lme/README_ZH.md");
@@ -57,8 +66,14 @@ test("publishes the root READMEs as localized project overviews", async () => {
   assert.match(chinese, /^---\ntitle: ReMe 项目介绍/m);
   assert.match(english, /href="\/zh\/overview"/);
   assert.match(chinese, /href="\/en\/overview"/);
+  assert.match(english, /https:\/\/reme\.agentscope\.io\/en\/blog_20260920/);
+  assert.doesNotMatch(english, /https:\/\/reme\.agentscope\.io\/zh\/blog_20260920/);
+  assert.match(chinese, /https:\/\/reme\.agentscope\.io\/zh\/blog_20260920/);
+  assert.match(english, /\[ReMe Memory Tags\]/);
+  assert.match(chinese, /\[给记忆加上“标签”\]/);
   assert.match(english, /src="\.\.\/figure\/design-philosophy\.svg"/);
-  assert.match(chinese, /\(\.\/memory_search\.md\)/);
+  assert.match(english, /\(https:\/\/reme\.agentscope\.io\/en\/memory_search\)/);
+  assert.match(chinese, /\(https:\/\/reme\.agentscope\.io\/zh\/memory_search\)/);
 });
 
 test("publishes portable and accurate DSH instructions", async () => {
@@ -68,6 +83,53 @@ test("publishes portable and accurate DSH instructions", async () => {
   assert.doesNotMatch(chinese, /\/Users\//);
   assert.match(english, /runtime counters refresh every 5 seconds/);
   assert.match(chinese, /每 5 秒仅刷新 DSH 插件的运行时计数/);
+});
+
+test("keeps Claude Code language switches on the documentation site", async () => {
+  const english = await readFile(path.join(generatedDir, "en/integrations/claude-code.md"), "utf8");
+  const chinese = await readFile(path.join(generatedDir, "zh/integrations/claude-code.md"), "utf8");
+  assert.match(english, /\[中文说明\]\(\/zh\/integrations\/claude-code\)/);
+  assert.match(chinese, /\[English\]\(\/en\/integrations\/claude-code\)/);
+  assert.doesNotMatch(english, /\]\([^)]*README_ZH\.md\)/);
+  assert.doesNotMatch(chinese, /\]\([^)]*README\.md\)/);
+});
+
+test("publishes Studio screenshots with site-safe links", async () => {
+  const english = await readFile(path.join(generatedDir, "en/workspace/studio.md"), "utf8");
+  const chinese = await readFile(path.join(generatedDir, "zh/workspace/studio.md"), "utf8");
+  assert.match(english, /\(\/figures\/studio\/studio-overview\.png\)/);
+  assert.match(chinese, /\(\/figures\/studio\/settings-status\.png\)/);
+  assert.match(english, /\(\/zh\/workspace\/studio\)/);
+  assert.match(chinese, /\(\/en\/workspace\/studio\)/);
+});
+
+test("publishes OpenClaw and Hermes integration figures with site-safe links", async () => {
+  for (const [page, integration] of [
+    ["en/integrations/openclaw.md", "openclaw"],
+    ["zh/integrations/openclaw.md", "openclaw"],
+    ["en/integrations/hermes.md", "hermes"],
+  ]) {
+    const content = await readFile(path.join(generatedDir, page), "utf8");
+    const images = [...content.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)];
+    assert.ok(images.length, `${page}: screenshots must exist`);
+    for (const [, source] of images) {
+      assert.ok(source.startsWith(`/figures/${integration}/`), `${page}: ${source}`);
+      await access(path.join(generatedDir, "public", source.slice(1)));
+    }
+  }
+  const hermesEnglish = await readFile(path.join(generatedDir, "en/integrations/hermes.md"), "utf8");
+  assert.match(hermesEnglish, /\(\/zh\/integrations\/hermes\)/);
+});
+
+test("keeps Studio source READMEs portable for package registries", async () => {
+  for (const name of ["README.md", "README_ZH.md"]) {
+    const source = await readFile(path.join(repoDir, "reme_studio", name), "utf8");
+    assert.doesNotMatch(source, /\]\(\.\/figures\//);
+    assert.match(
+      source,
+      /\]\(https:\/\/raw\.githubusercontent\.com\/agentscope-ai\/ReMe\/main\/reme_studio\/figures\//,
+    );
+  }
 });
 
 test("generates the callable Job reference from default.yaml", async () => {
@@ -111,9 +173,17 @@ test("tracks every generated input in documentation CI and deployment", async ()
   const requiredPaths = [
     "reme/config/default.yaml",
     "integrations/claude_code/README.md",
+    "integrations/claude_code/README_ZH.md",
+    "integrations/codex/README.md",
+    "integrations/codex/README_ZH.md",
+    "integrations/codex/figures/**",
     "integrations/hermes_agent/README.md",
-    "typescript/docs/**",
-    "typescript/figures/**",
+    "integrations/hermes_agent/figures/**",
+    "integrations/dsh/README*.md",
+    "integrations/dsh/figures/**",
+    "integrations/openclaw/README*.md",
+    "integrations/openclaw/figures/**",
+    "reme_studio/**",
     "benchmark/toolmemory/gitcha.png",
   ];
   for (const workflow of ["ci-docs.yml", "deploy-docs.yml"]) {

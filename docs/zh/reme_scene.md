@@ -2,6 +2,15 @@
 
 本文描述 ReMe 在真实 Agent 工作流里的使用方式。目录、Job 名称和能力边界按 `reme/` 最新代码整理。
 
+下面的 CLI 示例使用两阶段服务调用。先在一个终端启动服务，并保持运行：
+
+```bash
+reme start config=default
+```
+
+后续 CLI 示例都在另一个终端执行，复用该服务；如已启动目标 workspace 的服务，直接使用它。
+模型配置见[基础配置](./configuration.md)。
+
 ReMe 的共同模式是：
 
 ```text
@@ -75,7 +84,7 @@ daily/
 reme auto_dream date=2026-05-18
 ```
 
-`auto_dream` 是三步管线：
+`auto_dream` 是四步管线：
 
 ```text
 dream_extract_step
@@ -88,6 +97,9 @@ dream_integrate_step
 
 dream_finish_step
   checkpoint 成功处理的 daily 输入
+
+auto_tag_step
+  为新增或修改的 digest 笔记生成实体标签
 ```
 
 本场景中的产物：

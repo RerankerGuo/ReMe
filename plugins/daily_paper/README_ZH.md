@@ -11,8 +11,8 @@ Step backend，并在 `application_defaults` 下提供 Job 配置；通过 `plug
 ### 1. 安装 ReMe 和每日论文插件
 
 ```bash
-python -m pip install "reme-ai[core]>=0.4.1.9"
-reme plugins install reme-daily-paper
+python -m pip install "reme-ai[core]>=0.4.1.12"
+reme plugins install plugins/daily_paper
 ```
 
 ### 2. 配置模型环境变量
@@ -41,11 +41,11 @@ curl -s http://127.0.0.1:2333/daily_paper \
   -d '{"topics":"Agent memory"}'
 ```
 
-如果只需运行一次 Job，无需启动长期服务：
+脚本需要无服务单次执行时，参见[一次性 Job](../../docs/zh/services.md#一次性-job)。常规使用采用上面的服务启动与客户端调用流程。
 
-```bash
-reme start plugins='["daily-paper"]' job=daily_paper topics="Agent memory"
-```
+自定义应用配置需要提供 `agent_wrapper.default`、启用 tag index 的 `file_store.default`，以及
+Daily Paper 和自动标签使用的 `search`、`read`、`list_tags`、`frontmatter_read` 和
+`frontmatter_update` Jobs。
 
 ## 流程
 
@@ -60,7 +60,7 @@ RRF 排序后由 Agent 精选三篇
           ↓
 使用 search + read 关联历史记忆并生成简报
           ↓
-写入当日索引，并按需发送到钉钉
+生成记忆标签，由后台文件 watcher 刷新索引
 ```
 
 `daily_paper_collect_step` 并发读取运行日期所在周和所在月的榜单，以及严格前一日的 Daily Papers。候选按 arXiv ID
@@ -73,8 +73,8 @@ RRF 排序后由 Agent 精选三篇
 文本。三篇中文解读按精选顺序写入当天目录；扫描版或没有文本层的 PDF 会明确失败。
 
 `daily_paper_digest_step` 以本次生成的三篇解读为事实来源，只开放只读的 `search` 和 `read` 来关联较早记忆。
-代码会校验历史 wikilink、追加三篇源笔记链接，并重建当日索引。可选的 `dingtalk_markdown_send_step` 在配置群会话后
-发送最终简报；未配置时无副作用跳过。
+代码会校验历史 wikilink、追加三篇源笔记链接，并重建当日索引。随后 `auto_tag_step` 会更新三篇解读及最终简报的
+记忆标签 frontmatter，常规后台文件 watcher 会观察这些源文件变化并刷新派生索引。
 
 ## 参数
 
@@ -91,15 +91,11 @@ RRF 排序后由 Agent 精选三篇
 `pdf_timeout=600`、`max_pdf_bytes=52428800`、`max_pdf_pages=35` 和 `max_pdf_chars=300000`。
 
 数据客户端自动使用 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。手动任务通过 `use_hf_mirror=true` 启用 Hugging Face
-镜像；定时任务默认启用，可设置 `DAILY_PAPER_USE_HF_MIRROR=false` 改用官方服务。以下环境变量可覆盖数据源和钉钉配置：
+镜像；定时任务默认启用，可设置 `DAILY_PAPER_USE_HF_MIRROR=false` 改用官方服务。以下环境变量可覆盖数据源配置：
 
 ```dotenv
 HF_MIRROR_URL=https://hf-mirror.com
 ARXIV_MIRROR_URL=https://export.arxiv.org
-DINGTALK_APP_KEY=your-app-key
-DINGTALK_APP_SECRET=your-app-secret
-DINGTALK_ROBOT_CODE=your-robot-code
-DINGTALK_CONVERSATION_IDS=cid-group-one,cid-group-two
 ```
 
 ## 产物
@@ -124,4 +120,4 @@ Markdown 和 PDF 都通过同目录临时文件原子写入。`force=true` 会�
 python -m pytest plugins/daily_paper -v
 ```
 
-单元测试 mock Hugging Face、arXiv、AgentScope 和钉钉边界，不访问外部服务。
+单元测试 mock Hugging Face、arXiv 和 AgentScope 边界，不访问外部服务。

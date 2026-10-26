@@ -3,22 +3,17 @@
 # 2. 确认插件依赖的 reme-ai 版本已经发布到 PyPI；本工作流会在构建阶段验证该依赖可下载。
 # 3. 确认 PyPI Trusted Publisher 已绑定本仓库、此工作流和 pypi environment，且 PyPI 上不存在相同版本。
 # 4. 在 GitHub 仓库的 Actions 页面选择“Release / Auto Fin plugin”，点击“Run workflow”。
-# 5. 输入与 project.version 完全一致的版本号（例如 0.1.0）后运行；版本也可以带 v 前缀。
+# 5. 选择目标分支并运行；发布版本直接读取该提交的 project.version。
 #
 # 推荐发布顺序：reme-ai -> reme-auto-fin -> QwenPaw 更新依赖并通过 plugins: [auto-fin] 启用。
 # 当前仅支持 workflow_dispatch 手动触发，不会因 push、tag 或 release 自动发布。
 
 name: Release / Auto Fin plugin
 
-run-name: Publish reme-auto-fin ${{ inputs.version }}
+run-name: Publish reme-auto-fin ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: Version from plugins/auto-fin/pyproject.toml (for example, 0.1.0)
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -30,16 +25,17 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      RELEASE_VERSION: ${{ inputs.version }}
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.package.outputs.version }}
 
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
 
@@ -53,9 +49,8 @@ jobs:
       - name: Validate package name and release version
         id: package
         run: |
-          python - "${RELEASE_VERSION}" <<'PY'
+          python - <<'PY'
           import os
-          import sys
           import tomllib
           from pathlib import Path
 
@@ -63,20 +58,17 @@ jobs:
           from packaging.version import Version
 
           project = tomllib.loads(Path("plugins/auto-fin/pyproject.toml").read_text(encoding="utf-8"))["project"]
-          expected = Version(sys.argv[1].removeprefix("v"))
           actual = Version(project["version"])
           if project["name"] != "reme-auto-fin":
               raise SystemExit(f"Expected project name 'reme-auto-fin', found {project['name']!r}")
-          if actual != expected:
-              raise SystemExit(f"Package version is {actual}, but workflow input is {expected}")
           requirements = [requirement for requirement in project["dependencies"] if requirement.startswith("reme-ai")]
           if len(requirements) != 1:
               raise SystemExit(f"Expected one reme-ai dependency, found {requirements!r}")
           reme_requirement = Requirement(requirements[0])
           if reme_requirement.name != "reme-ai" or reme_requirement.extras:
               raise SystemExit(f"Expected a base reme-ai dependency, found {requirements[0]!r}")
-          if Version("0.4.1.8") in reme_requirement.specifier or Version("0.4.1.9") not in reme_requirement.specifier:
-              raise SystemExit(f"Expected reme-ai>=0.4.1.9, found {requirements[0]!r}")
+          if Version("0.4.1.11") in reme_requirement.specifier or Version("0.4.1.12") not in reme_requirement.specifier:
+              raise SystemExit(f"Expected reme-ai>=0.4.1.12, found {requirements[0]!r}")
           root_project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
           agentscope_requirements = [
               Requirement(value) for value in root_project["optional-dependencies"]["as"]
@@ -96,6 +88,7 @@ jobs:
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
               print(f"reme_requirement={reme_requirement}", file=output)
               print(f"agentscope_requirement={agentscope_requirement}", file=output)
+              print(f"version={actual}", file=output)
           print(f"Publishing {project['name']} {actual}")
           PY
 
@@ -140,7 +133,8 @@ jobs:
           assert set(manifest.backends) == {
               "auto_fin_data_step",
               "auto_fin_topic_step",
-              "auto_fin_merge_step",
+              "auto_fin_research_step",
+              "auto_fin_digest_step",
           }
           assert set(manifest.application_defaults["jobs"]) == {
               "auto_fin",
@@ -149,15 +143,16 @@ jobs:
           PY
 
       - name: Upload distributions
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: reme-auto-fin-${{ inputs.version }}
+          name: reme-auto-fin-${{ steps.package.outputs.version }}
           path: dist/auto-fin/
           if-no-files-found: error
 
   publish:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: pypi
     permissions:
       contents: read
@@ -165,12 +160,12 @@ jobs:
 
     steps:
       - name: Download distributions
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: reme-auto-fin-${{ inputs.version }}
+          name: reme-auto-fin-${{ needs.build.outputs.version }}
           path: dist/auto-fin
 
       - name: Publish reme-auto-fin
-        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
         with:
           packages-dir: dist/auto-fin

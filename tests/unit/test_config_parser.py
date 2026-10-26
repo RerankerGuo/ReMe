@@ -10,8 +10,24 @@ from reme.config.config_parser import (
     _read_config_file,
     parse_args,
     parse_dot_notation,
+    parse_kwargs,
     resolve_app_config,
 )
+from reme.schema import ApplicationConfig
+
+
+def test_cli_disables_dream_schedule_without_disabling_manual_job():
+    """A CLI schedule override preserves callable jobs and other default schedules."""
+    cfg = ApplicationConfig(
+        **resolve_app_config(log_config=False, **parse_kwargs("jobs.dream_cron.enabled=false")),
+    )
+
+    assert cfg.jobs["dream_cron"].enabled is False
+    assert cfg.jobs["dream_cron"].backend == "cron"
+    assert cfg.jobs["auto_dream"].enable_serve is True
+    assert cfg.jobs["auto_dream"].enabled is True
+    assert cfg.jobs["auto_dream"].steps
+    assert cfg.jobs["optimize_index_cron"].enabled is True
 
 
 def test_load_builtin_config_by_filename_with_suffix():
@@ -147,6 +163,16 @@ def test_parse_args_separates_action_and_application_kwargs():
 
     assert action == "search"
     assert kwargs == {"query": "hello", "limit": 3}
+
+
+@pytest.mark.parametrize("value", ["nan", "NaN", "inf", "-Infinity", "1e999"])
+def test_parse_kwargs_keeps_non_finite_numbers_as_strings(value):
+    """JSON has no NaN or Infinity, so these values stay text instead of becoming floats."""
+    assert parse_kwargs(f"query={value}", "limit=5", "min_score=0.5") == {
+        "query": value,
+        "limit": 5,
+        "min_score": 0.5,
+    }
 
 
 @pytest.mark.parametrize("item", ["=1", ".a=1", "a.=1", "a..b=1"])

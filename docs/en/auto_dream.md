@@ -37,6 +37,7 @@ auto_dream:
     - backend: dream_integrate_step
     - backend: dream_finish_step
       file_catalog: dream
+    - backend: auto_tag_step
 ```
 
 Parameters:
@@ -71,7 +72,7 @@ The main outputs are:
 | `digest/wiki/*.md`             | General knowledge, concepts, observations, and decision precedents.          |
 | `metadata/file_catalog/dream*` | Dream-specific catalog used to detect changes in daily inputs.               |
 
-## Three Stages
+## Four Stages
 
 ### 1. Extract
 
@@ -124,7 +125,7 @@ paths enter `failed_paths`. The Finish stage does not checkpoint failed paths, e
 `dream_finish_step` completes the run:
 
 1. Write successfully processed changed paths to `file_catalog: dream`.
-2. Also write every refreshed day-index page in the scan window to the catalog.
+2. Also write refreshed day-index pages observed by Extract in the scan window to the catalog.
 3. Persist the dream catalog if there were upserts or deletions.
 4. Return a summary containing counts for scanned, changed, integrated, checkpoints, and related values.
 
@@ -134,9 +135,30 @@ pipeline; see [Proactive](./proactive.md).
 Failed paths are not checkpointed. The next `auto_dream` run therefore continues to treat them as changed inputs until
 integration succeeds.
 
+Checkpoints retain the input mtimes observed by Extract, including scanned day-index pages. If a source is edited while
+model work runs, its newer version remains changed for a later run, even after restart. The later run must include the
+source date in its scan window. Finish does not checkpoint files absent from that scan.
+
+### 4. Auto Tag
+
+After Finish, both `auto_dream` and `dream_cron` run `auto_tag_step` on Markdown digest files actually created or modified
+during integration, including writes recovered after agent errors. Repeated writes to one file are tagged once. The
+Step uses the same request-scoped `changes` contract as [Auto Memory](./auto_memory.md) and writes entity tags to the
+configured frontmatter key, `memory_tags` by default. Unchanged files and daily source notes are not tagged by Dream.
+
+Tagging diagnostics appear in `metadata.auto_tag`. Per-file tagging failures preserve the dream answer, success status,
+and checkpoint decisions. A later run without file changes does not automatically retry failed tagging. Tag-index
+updates follow the existing asynchronous file watcher.
+
 ## Running Auto Dream
 
-CLI:
+Start the service in one terminal and leave it running:
+
+```bash
+reme start config=default
+```
+
+From another terminal, call the running service:
 
 ```bash
 reme auto_dream date=2026-06-20
@@ -167,6 +189,7 @@ jobs:
       - backend: dream_integrate_step
       - backend: dream_finish_step
         file_catalog: dream
+      - backend: auto_tag_step
 ```
 
 ## Important Boundaries
@@ -182,4 +205,4 @@ the workspace-relative wikilink semantics described in
 `auto_dream` does not invent an overview from nothing. Only content that actually appears in daily input and is
 extracted as a memory unit can enter digest.
 
-The complete flow depends on an LLM for Extract and Integrate.
+The complete flow depends on an LLM for Extract, Integrate, and Auto Tag.

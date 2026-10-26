@@ -14,10 +14,12 @@ ReMe keeps memory in an independent service and a user-owned workspace. Multiple
 | Local script or hook | ReMe CLI |
 | Application backend | HTTP Client |
 | Tool-protocol host | MCP |
-| TypeScript agent | `@agentscope-ai/reme` |
-| Claude Code | MCP + Skill + Stop Hook |
+| DeepSeek Harness | [`@agentscope-ai/reme-dsh-plugin`](./integrations/dsh.md) profile bundle |
+| OpenClaw | [`@agentscope-ai/reme-openclaw-plugin`](./integrations/openclaw.md) |
+| Claude Code | [Start ReMe, then install the plugin](./integrations/claude-code.md) |
 | Hermes Agent | Memory provider adapter |
-| Codex or another coding agent | `reme_memory` Skill or MCP |
+| Codex | [Start ReMe, then install the plugin](./integrations/codex.md) |
+| Other coding agents | `reme_memory` Skill or MCP |
 
 ## General memory loop
 
@@ -42,17 +44,54 @@ Use `service.jobs` to expose a read-only subset or keep write tools in a separat
 
 It deliberately avoids silently modifying Python environments, stopping unknown processes on port conflicts, writing recalled tool output back as conversation source, or persisting credentials.
 
-## TypeScript, OpenClaw, and DeepSeek Harness
+## DeepSeek Harness
 
-The [`@agentscope-ai/reme` TypeScript package](./integrations/typescript.md) provides the shared HTTP client and host adapters. See the dedicated guides for [DeepSeek Harness](./integrations/dsh.md) and [OpenClaw](./integrations/openclaw.md).
+Install the self-contained [DeepSeek Harness plugin](./integrations/dsh.md):
+
+```bash
+dsh plugin --profile web add @agentscope-ai/reme-dsh-plugin
+```
+
+Release links: [Awesome DSH Plugin](https://awesome-dsh-plugin.com/p/agentscope-ai/ReMe--integrations-dsh/) and
+[npm](https://www.npmjs.com/package/@agentscope-ai/reme-dsh-plugin).
+
+It injects long-term-memory usage guidance into new root-agent sessions and exposes the read-only `reme_search` tool;
+it does not preload the full memory history into the prompt. Completed user/assistant turns can be submitted to
+`auto_memory` in background batches, while a timezone-aware schedule runs `auto_dream` to consolidate daily notes.
+
+DSH settings configure the endpoint, guidance language, search limits, capture interval, root-agent filtering, and
+consolidation schedule. The ReMe Status page exposes Overview, Auto Memory, Memory Consolidation, Components, Journal,
+and Personal Knowledge Base views. Runtime counters are diagnostic state; workspace Markdown remains the durable source
+of truth.
+
+## OpenClaw
+
+Install the independently published [OpenClaw plugin](./integrations/openclaw.md):
+
+```bash
+openclaw plugins install clawhub:@agentscope-ai/reme-openclaw-plugin
+```
+
+Release links: [ClawHub](https://clawhub.ai/agentscope-ai/plugins/reme-openclaw-plugin) and
+[npm](https://www.npmjs.com/package/@agentscope-ai/reme-openclaw-plugin). The plugin provides its own host-specific
+ReMe HTTP boundary and release lifecycle.
 
 ## Claude Code
 
-`integrations/claude_code/` provides streamable HTTP MCP configuration, a `reme-memory` Skill, and a Stop hook that calls `auto_memory_cc`. Follow that directory's README for installation.
+Start the ReMe HTTP service, then install the [ReMe plugin in Claude Code](./integrations/claude-code.md).
+The installed plugin supplies automatic recall, completed-turn recording, and memory queries through its
+bundled hooks, MCP tools, and skill. This host uses the plugin installation flow.
+
+## Codex
+
+Start the ReMe HTTP service, install the [ReMe plugin in Codex](./integrations/codex.md), and trust its
+hooks in `/hooks`. Open a new conversation to use automatic recall, recording, and the plugin's memory tools.
+This host also uses the plugin installation flow. Each host keeps its own plugin configuration and retry
+queue; the ReMe service owns memory storage and consolidation.
 
 ## Hermes Agent
 
-`integrations/hermes_agent/` provides a memory provider that recalls context before model calls and asynchronously invokes `auto_memory` after each turn.
+`integrations/hermes_agent/` provides a memory provider with HTTP and embedded modes. It recalls context before model calls and asynchronously invokes `auto_memory` after each turn. Its `config_schema.py` is rendered by Hermes' generic memory settings UI.
 
 ## Production guidance
 

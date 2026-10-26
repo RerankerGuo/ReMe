@@ -5,6 +5,8 @@ import datetime
 import os
 from typing import Final
 
+from ._source_format import ALL_RETURNED_MESSAGE, NO_RESULTS_MESSAGE
+from ._tool_context import _ToolContextMixin
 from ..base_step import BaseStep
 from ..file_io import extract_daily_date
 from ...components import R
@@ -27,11 +29,17 @@ def _default_limit() -> int:
         return _DEFAULT_LIMIT
 
 
+def _filter_values(value: object) -> set:
+    """Normalize a scalar or collection-valued search filter."""
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return set(value)
+    return {value}
+
+
 @R.register("search_step")
-class SearchStep(BaseStep):
+class SearchStep(_ToolContextMixin, BaseStep):
     """Hybrid search: run vector + keyword in parallel, fuse via RRF, filter, truncate."""
 
-    TOOL_CONTEXTS_KEY: Final[str] = "tool_contexts"
     SEARCH_SEEN_KEY: Final[str] = "search_seen_chunk_ids"
 
     def __init__(
@@ -91,14 +99,6 @@ class SearchStep(BaseStep):
     def _now_ts() -> float:
         return datetime.datetime.now().timestamp()
 
-    def _tool_context_store(self, tool_context_id: str) -> dict:
-        """Return the mutable state bucket for a tool context."""
-        if self.app_context is not None:
-            contexts = self.app_context.metadata.setdefault(self.TOOL_CONTEXTS_KEY, {})
-        else:
-            contexts = self.kwargs.setdefault(self.TOOL_CONTEXTS_KEY, {})
-        return contexts.setdefault(tool_context_id, {})
-
     def _dedupe_tool_context(
         self,
         chunks: list[FileChunk],
@@ -134,9 +134,71 @@ class SearchStep(BaseStep):
             "ttl_seconds": ttl,
         }
 
+    async def _resolve_tag_filter(
+        self,
+        raw_tags: object,
+        search_filter: dict,
+    ) -> tuple[dict, dict | None, str | None]:
+        """Merge tag-derived paths into the ordinary file-store filter."""
+        if not raw_tags:
+            return search_filter, None, None
+
+        if not self.file_store.tag_index_enabled:
+            self.logger.warning(
+                f"[{self.name}] tags requested but tag_index_unavailable",
+            )
+            return (
+                search_filter,
+                {"requested": True, "applied": False, "reason": "tag_index_unavailable"},
+                None,
+            )
+        tag_index = self.file_store.require_tag_index()
+        if not tag_index.is_healthy:
+            self.logger.warning(f"[{self.name}] tags requested but tag_index_unavailable")
+            return (
+                search_filter,
+                {"requested": True, "applied": False, "reason": "tag_index_unavailable"},
+                None,
+            )
+
+        normalized_tags = tag_index.normalize_query_tags(raw_tags)
+        if not normalized_tags:
+            return search_filter, None, "Error: tags contained no valid values"
+
+        allowed_paths = set(await tag_index.paths_for_tags(normalized_tags, match_all=False))
+        matched_path_count = len(allowed_paths)
+        if not tag_index.is_healthy:
+            self.logger.warning(
+                f"[{self.name}] tag index became unhealthy during lookup",
+            )
+            return (
+                search_filter,
+                {"requested": True, "applied": False, "reason": "tag_index_unavailable"},
+                None,
+            )
+
+        exact_paths = set()
+        has_exact_path_filter = False
+        for key in ("path", "paths"):
+            if key in search_filter:
+                has_exact_path_filter = True
+                exact_paths.update(_filter_values(search_filter.pop(key)))
+        if has_exact_path_filter:
+            allowed_paths.intersection_update(exact_paths)
+        search_filter["paths"] = sorted(allowed_paths)
+        metadata = {
+            "requested": True,
+            "applied": True,
+            "tags": normalized_tags,
+            "matched_paths": matched_path_count,
+        }
+        return search_filter, metadata, None
+
     async def execute(self):
         assert self.context is not None
-        query: str = (self.context.get("query", "") or "").strip()
+        self.context.response.metadata.pop("empty_result", None)
+        raw_query = self.context.get("query")
+        query: str = "" if raw_query is None else str(raw_query).strip()
         limit: int = int(self.context.get("limit") or _default_limit())
         min_score: float = float(self.context.get("min_score") or 0.0)
         # vector_weight: prefer agent-supplied context value; fallback to YAML kwargs / default 0.7.
@@ -158,6 +220,7 @@ class SearchStep(BaseStep):
         expand_links_enabled: bool = bool(self.kwargs.get("expand_links", True))
         max_links_per_direction: int = int(self.kwargs.get("max_links_per_direction", 10))
         tool_context_id: str = (self.context.get("tool_context_id", "") or "").strip()
+        max_search_calls = self.context.get("max_search_calls")
         strict_date_filter: bool = bool(
             self.context.get("strict_date_filter") or self.kwargs.get("strict_date_filter", False),
         )
@@ -168,8 +231,30 @@ class SearchStep(BaseStep):
             return self.context.response
         assert limit > 0, f"limit must be positive, got {limit}"
 
+        if max_search_calls is not None:
+            if not tool_context_id or self.app_context is None:
+                raise ValueError("max_search_calls requires an application and tool_context_id")
+            maximum = int(max_search_calls)
+            if maximum < 1:
+                raise ValueError("max_search_calls must be positive")
+            budgets = self.app_context.metadata.setdefault("__search_call_budgets", {})
+            budget = budgets.setdefault(tool_context_id, {"count": 0, "lock": asyncio.Lock()})
+            async with budget["lock"]:
+                if budget["count"] >= maximum:
+                    self.logger.warning(
+                        f"[{self.name}] search budget exhausted context={tool_context_id} limit={maximum}",
+                    )
+                    self.context.response.success = False
+                    self.context.response.answer = f"Error: search call limit of {maximum} reached"
+                    return self.context.response
+                budget["count"] += 1
+                self.logger.info(
+                    f"[{self.name}] search budget context={tool_context_id} " f"call={budget['count']}/{maximum}",
+                )
+
         candidates = min(_MAX_CANDIDATES, max(1, int(limit * candidate_multiplier)))
         search_filter: dict = dict(self.context.get("search_filter", {}) or {})
+        raw_tags = self.context.get("tags", []) or []
 
         # Promote top-level date parameters into search_filter for file_store.
         for date_key in ("start_date", "end_date"):
@@ -208,6 +293,14 @@ class SearchStep(BaseStep):
         if strict_date_filter:
             search_filter["strict_date_filter"] = True
 
+        search_filter, tag_filter_metadata, tag_error = await self._resolve_tag_filter(raw_tags, search_filter)
+        if tag_error is not None:
+            self.context.response.success = False
+            self.context.response.answer = tag_error
+            if tag_filter_metadata is not None:
+                self.context.response.metadata["tag_filter"] = tag_filter_metadata
+            return self.context.response
+
         text_weight = 1.0 - vector_weight
         use_vector = vector_weight > 0.0
         use_keyword = text_weight > 0.0
@@ -240,8 +333,17 @@ class SearchStep(BaseStep):
             fused = self._rrf_merge(vector_results, keyword_results, vector_weight)
 
         if min_score > 0.0:
+            max_rrf_score = 1.0 / (_RRF_K + 1)
+            if hybrid and min_score > max_rrf_score:
+                self.logger.warning(
+                    f"[{self.name}] min_score={min_score:g} exceeds the hybrid RRF maximum "
+                    f"{max_rrf_score:.8g}; all hybrid results will be filtered out. "
+                    "RRF scores are rank-based, not vector similarities or BM25 scores. "
+                    "Keep min_score=0 to disable filtering; single-branch queries use native scores.",
+                )
             fused = [c for c in fused if c.score >= min_score]
 
+        pre_dedup_count = len(fused)
         dedup: dict | None = None
         if tool_context_id:
             fused, dedup = self._dedupe_tool_context(fused, tool_context_id, limit)
@@ -262,6 +364,11 @@ class SearchStep(BaseStep):
             answer_lines.extend(render_expansion_lines(link_expansion.get(c.path, {})))
 
         self.context.response.answer = "\n".join(answer_lines)
+        if not fused:
+            self.context.response.metadata["empty_result"] = {
+                "reason": "all_returned" if pre_dedup_count else "no_results",
+                "message": ALL_RETURNED_MESSAGE if pre_dedup_count else NO_RESULTS_MESSAGE,
+            }
         self.context.response.metadata["results"] = [
             c.model_dump(exclude_none=True, exclude={"embedding"}) for c in fused
         ]
@@ -272,6 +379,8 @@ class SearchStep(BaseStep):
             "returned": len(fused),
             "hybrid": hybrid,
         }
+        if tag_filter_metadata is not None:
+            self.context.response.metadata["tag_filter"] = tag_filter_metadata
         if dedup is not None:
             self.context.response.metadata["dedup"] = dedup
         return self.context.response

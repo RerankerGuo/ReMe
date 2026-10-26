@@ -276,6 +276,8 @@ BEAM covers ten categories of tasks, including contradiction resolution, event o
 
 ReMe also uses $\pi$-Bench to evaluate the potential of multi-session reasoning to improve agent proactivity. The PROC score in $\pi$-Bench evaluates capabilities including directly fulfilling hidden intent, guiding targeted clarification, recovering cross-session preferences, reusing cross-session conventions, inferring cross-task dependencies, and advancing underspecified requests. Across five user personas, ReMe Agent achieved an average PROC score of 0.580, outperforming NanoBot by 2.4% under the same test-model configuration. See the [$\pi$-Bench paper](https://arxiv.org/abs/2605.14678) for details about the benchmark.
 
+On **MemLens-256K**, ReMe Image achieved LLM-Judge scores of **53.44% / 72.49%** with Qwen3.6-35B-A3B / Qwen3.8-Max, exceeding Full Context Image by **6.35 / 6.88** percentage points. All methods use the same **189/195** cases after filtering six cases that triggered model-provider content moderation. See the [multimodal memory evaluation](./blog_20261009.md#memlens-256k-results) for the five-method comparison.
+
 ## Who Is ReMe For?
 
 ### People Who Use Agents Directly
@@ -316,11 +318,11 @@ that best fits their runtime environment and share the same local memory workspa
 
 | Agent | Recommended integration | Capabilities after integration |
 |-------|-------------------------|--------------------------------|
-| **DeepSeek Harness** | Install [`@agentscope-ai/reme`](../../typescript/README.md#deepseek-harness) as a DSH profile bundle. | Long-term memory guidance, `reme_search`, automatic capture of completed main-agent turns, and scheduled Auto Dream. |
-| **OpenClaw** | Install [`@agentscope-ai/reme`](../../typescript/README.md#openclaw) as the native memory plugin. | Recall before conversational root-agent runs, explicit search, automatic turn capture, and scheduled Auto Dream. |
+| **DeepSeek Harness** | Install [`@agentscope-ai/reme-dsh-plugin`](https://reme.agentscope.io/en/integrations/dsh) as a DSH profile bundle. | Long-term memory guidance, `reme_search`, automatic capture of completed main-agent turns, scheduled Auto Dream, and ReMe Status. |
+| **OpenClaw** | Install [`@agentscope-ai/reme-openclaw-plugin`](https://reme.agentscope.io/en/integrations/openclaw) as the native memory plugin. | Recall before conversational root-agent runs, explicit search, automatic turn capture, scheduled Auto Dream, and status diagnostics. |
 | **QwenPaw** | Embed ReMe in-process through the Python API. | Reuse the host application's lifecycle and model configuration while keeping memories local and file-based. |
-| **Claude Code** | Start the streamable HTTP MCP Service and install [`integrations/claude_code/reme`](../../integrations/claude_code/reme). | MCP memory-recall tools, the `reme-memory` skill, and a Stop hook that automatically records sessions. |
-| **Hermes** | Start the HTTP Service and install [`integrations/hermes_agent`](../../integrations/hermes_agent). | Automatically recall relevant memories before model calls and invoke `auto_memory` asynchronously after each conversation turn. |
+| **Claude Code** | Start the shared streamable HTTP MCP Service and install the [Claude Code plugin](https://reme.agentscope.io/en/integrations/claude-code). | Semantic, graph, and state recall through MCP, plus asynchronous session capture through a Stop hook. |
+| **Hermes** | Install [`integrations/hermes_agent`](../../integrations/hermes_agent) and choose HTTP or embedded mode. | Automatically recall relevant memories before model calls and invoke `auto_memory` asynchronously after each conversation turn. |
 | **Codex and other CLI-capable agents** | Copy or install [`skills/reme_memory/SKILL.md`](../../skills/reme_memory/SKILL.md). | Search, read, and write memories through the CLI; automatic recording requires the host agent to integrate explicitly with the conversation lifecycle. |
 
 For installation, configuration, and integration demos, see the [README](../../README.md).

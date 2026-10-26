@@ -60,6 +60,12 @@ While the service is running, `watch_changes_step` takes over. It uses `watchfil
 directories, groups file events within a quiet window, and uses `coalesce_changes()` to collapse repeated events for the
 same path into one stable batch of changes.
 
+The Step's `watch_mode` defaults to `awatch`. Set `watch_mode: watch` on each relevant
+`watch_changes_step` to run `watchfiles.watch()` on a dedicated thread. This isolates long-lived
+watchers from AnyIO's shared request-thread limiter when embedding many ReMe applications in one
+process. Each active watcher still needs one thread. Filtering, batching, and `force_polling`
+settings apply to both modes; stopping the job also stops and joins its dedicated watcher.
+
 `update_index_step` performs the actual index writes:
 
 1. Select a file chunker by suffix.
@@ -111,8 +117,7 @@ It combines three kinds of capability:
 | `embedding_store`       | Disabled      | When enabled, generate embeddings for chunks and support vector recall. |
 
 Out of the box, search therefore uses primarily BM25 plus link expansion. After setting `embedding_store: default`,
-`SearchStep` runs vector and keyword recall together. Additionally, switching the `file_store` `backend` from `local` to
-`faiss` upgrades vector retrieval from a linear scan to a FAISS HNSW index, offering faster recall at scale.
+`SearchStep` runs vector and keyword recall together.
 
 The embedding store accepts `health_check_timeout` for its startup probe. A temporary failure skips the current vector
 backfill while keeping BM25 available; a later successful provider request resumes the missing-vector backfill
@@ -124,6 +129,17 @@ missing vectors in the same vector space. Vector-space changes must use the expl
 Use `scope: bm25` to rebuild only keyword search, or `scope: tag` to rebuild the optional tag index from the current
 file graph. `scope: all` rebuilds BM25 first, then embeddings, and finally tags. BM25 and embedding rebuilds use the
 current `file_chunks` snapshot; the tag rebuild uses `FileNode` frontmatter from the file graph.
+
+## Vector Index Backends
+
+With embeddings enabled, `file_store.default.backend` can be `local`, `zvec`, or `faiss`. `local` scans vectors linearly;
+`zvec` uses an in-process HNSW index with native vector updates and deletes; `faiss` uses a FAISS HNSW index. The latter
+two store rebuildable vector indexes. Memory files and ReMe's chunk data remain the source of truth.
+
+To use Zvec or FAISS, first configure `as_embedding` and `embedding_store` as shown in
+[Configuration](./configuration.md#embeddings). Then set `file_store.default.embedding_store` to `default` and
+`file_store.default.backend` to `zvec` or `faiss`. The `core` installation includes both dependencies; the default
+configuration still uses `local` with embeddings disabled.
 
 ## How to Search
 
@@ -147,7 +163,13 @@ search:
       max_links_per_direction: 10
 ```
 
-Call it with:
+Start the service in one terminal and leave it running:
+
+```bash
+reme start config=default
+```
+
+From another terminal, call the running service:
 
 ```bash
 reme search query="recent discussions about indexing" limit=5
@@ -185,6 +207,26 @@ fused_score = vector_weight / (60 + vector_rank)
 
 The default `vector_weight=0.7` gives semantic recall more weight when embeddings are enabled, while keyword search can
 still promote chunks with exact term matches.
+
+### Score thresholds
+
+Keep `min_score=0` (the default) for normal hybrid search and use `limit` to select the top results.
+Positive `min_score` values filter the returned score before truncation, using the scale of the branches that
+actually returned hits for that query:
+
+| Branches with hits | Score compared with `min_score` |
+| --- | --- |
+| Vector only | Native vector-backend score; its range depends on the backend |
+| BM25 only | Native BM25 score, without a fixed upper bound |
+| Both | Weighted RRF rank score, at most `1/61` (approximately `0.01639`) |
+
+RRF scores express rank contributions, not normalized relevance or probabilities. The maximum assumes the same chunk
+ranks first in both lists; a vector-only contribution with the default weight is at most `0.7/61`.
+Changing `vector_weight` changes individual contributions, while the two weights still sum to 1.
+The score scale can change between queries when one branch has no hits, so a single positive threshold is not
+comparable across all modes. For example, `min_score=0.05` removes every hybrid result even if its native vector or
+BM25 score is high. Search logs a warning when both branches have hits and the threshold exceeds `1/61`.
+The threshold is still applied: the warning does not lower it or restore filtered results.
 
 ## How BM25 Works
 
@@ -233,6 +275,23 @@ connects to. If a result is worth pursuing, use `read path=...` to open the sour
 - `response.answer`: human-readable text. Each matched block contains its path, line numbers, score, and chunk content,
   followed by outlinks and inlinks.
 - `response.metadata`: structured programmatic results containing `results`, `link_expansion`, and `counts`.
+
+When the default `search` Job returns no results, `response.answer` remains `""` and `success` remains `true`.
+The `results` list is empty and `counts.returned` is `0`. An optional `response.metadata.empty_result` explains why:
+
+| `reason`       | Meaning                                                                     |
+|----------------|-----------------------------------------------------------------------------|
+| `no_results`   | No candidates matched or survived `min_score`.                               |
+| `all_returned` | All eligible chunks were already returned within the same `tool_context_id`. |
+
+The field also contains a human-readable `message`. Programmatic consumers should use `reason` to distinguish the
+outcomes. Normal hits omit `empty_result` and keep their existing answer format.
+
+To show the explanation through the running service's CLI client, enable the existing metadata display option:
+
+```bash
+reme search query="recent discussions about indexing" show_metadata=true
+```
 
 Typical text structure:
 

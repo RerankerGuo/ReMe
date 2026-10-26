@@ -292,6 +292,8 @@ cases / 400 题上取得 66.1%，在 1M 设置下的 35 cases / 700 题上取得
 Agent 在 5 种用户角色（User Persona）上平均取得 0.580 的 PROC 分数，超出相同测试模型配置的 NanoBot
 2.4%。关于该基准的详细介绍见 [$\pi$-Bench 论文](https://arxiv.org/abs/2605.14678)。
 
+在 **MemLens-256K** 上，ReMe Image 的 LLM-Judge 在 Qwen3.6-35B-A3B / Qwen3.8-Max 下达到 **53.44% / 72.49%**，比 Full Context Image 高 **6.35 / 6.88** 个百分点。统一过滤 6 个触发模型服务商内容安全审核的 case 后，汇报 **189/195** 个 case；五种方法的对比见[多模态记忆评测](./blog_20261009.md#memlens-256k-results)。
+
 ## ReMe 能帮谁？
 
 ### 直接使用 Agent 的人
@@ -334,11 +336,11 @@ ReMe 既可以作为本地记忆服务，通过 CLI、HTTP API 或 MCP Server �
 
 | Agent                                  | 推荐接入方式                                                                                     | 接入后能力                                                                                                   |
 |----------------------------------------|--------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
-| **DeepSeek Harness**                   | 将 [`@agentscope-ai/reme`](../../typescript/README_ZH.md#deepseek-harness) 安装为 DSH profile bundle。 | 长期记忆指引、`reme_search`、自动捕获主 Agent 已完成的对话，以及定时 Auto Dream。                            |
-| **OpenClaw**                           | 将 [`@agentscope-ai/reme`](../../typescript/README_ZH.md#openclaw) 安装为原生 memory plugin。     | 根 Agent 对话运行前召回、显式搜索、自动捕获对话，以及定时 Auto Dream。                                      |
+| **DeepSeek Harness**                   | 将 [`@agentscope-ai/reme-dsh-plugin`](https://reme.agentscope.io/zh/integrations/dsh) 安装为 DSH profile bundle。 | 长期记忆指引、`reme_search`、自动捕获主 Agent 已完成的对话、定时 Auto Dream 和 ReMe Status。                            |
+| **OpenClaw**                           | 将 [`@agentscope-ai/reme-openclaw-plugin`](https://reme.agentscope.io/zh/integrations/openclaw) 安装为原生 memory plugin。 | 根 Agent 对话运行前召回、显式搜索、自动捕获对话、定时 Auto Dream 和状态诊断。                                      |
 | **QwenPaw**                            | 通过 Python API 在进程内嵌入 ReMe。                                                              | 复用宿主应用的生命周期和模型配置，同时保持记忆本地、文件化。                                                 |
-| **Claude Code**                        | 启动 streamable HTTP MCP Service，并安装 [`integrations/claude_code/reme`](../../integrations/claude_code/reme)。 | MCP 记忆召回工具、`reme-memory` skill，以及自动记录会话的 Stop hook。                                        |
-| **Hermes**                             | 启动 HTTP Service，并安装 [`integrations/hermes_agent`](../../integrations/hermes_agent)。                  | 在模型调用前自动召回相关记忆，并在每轮对话完成后异步调用 `auto_memory`。                                     |
+| **Claude Code**                        | 启动共享 streamable HTTP MCP Service，并安装 [Claude Code 插件](https://reme.agentscope.io/zh/integrations/claude-code)。 | 通过 MCP 进行语义、图关系和状态召回，并由 Stop Hook 异步捕获会话。                                        |
+| **Hermes**                             | 安装 [`integrations/hermes_agent`](../../integrations/hermes_agent)，并选择 HTTP 或 Embedded 模式。         | 在模型调用前自动召回相关记忆，并在每轮对话完成后异步调用 `auto_memory`。                                     |
 | **Codex 等支持 CLI 的 Agent**          | 复制或安装 [`skills/reme_memory/SKILL.md`](../../skills/reme_memory/SKILL.md)。                    | 通过 CLI 搜索、读取和写入记忆；自动记录需要宿主 Agent 显式接入会话生命周期。                                 |
 
 安装、配置与集成演示可查看 [README 中文版](../../README_ZH.md)。

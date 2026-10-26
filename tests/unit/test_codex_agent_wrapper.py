@@ -22,6 +22,10 @@ from reme.config import resolve_app_config
 from reme.enumeration import ChunkEnum, ComponentEnum
 from reme.schema import ApplicationConfig, Response
 
+# A fresh bridge imports ReMe before replying to initialize; keep this separate
+# from the 10-second budget for requests to an already initialized server.
+STDIO_INIT_TIMEOUT = 30
+
 
 class _Job:
     def __init__(self, name="search"):
@@ -234,10 +238,11 @@ async def test_stdio_bridge_starts_and_lists_selected_job(tmp_path):
             "empty",
         ],
         cwd=str(Path(__file__).resolve().parents[2]),
+        keep_alive=False,
     )
 
-    async with Client(transport, timeout=10) as client:
-        tools = await client.list_tools()
+    async with Client(transport, timeout=None, init_timeout=STDIO_INIT_TIMEOUT) as client:
+        tools = await asyncio.wait_for(client.list_tools(), timeout=10)
 
     assert [tool.name for tool in tools] == ["empty"]
 
@@ -287,15 +292,22 @@ async def test_stdio_bridge_stdout_is_protocol_clean(tmp_path):
             "clientInfo": {"name": "test", "version": "1"},
         },
     }
-    assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
-    proc.stdin.write((json.dumps(request) + "\n").encode())
-    await proc.stdin.drain()
-    first_line = await asyncio.wait_for(proc.stdout.readline(), timeout=10)
-    message = json.loads(first_line)
-    assert message["jsonrpc"] == "2.0"
-    assert message["id"] == 1
-    proc.terminate()
-    await asyncio.wait_for(proc.wait(), timeout=10)
+    try:
+        assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
+        proc.stdin.write((json.dumps(request) + "\n").encode())
+        await proc.stdin.drain()
+        first_line = await asyncio.wait_for(proc.stdout.readline(), timeout=STDIO_INIT_TIMEOUT)
+        message = json.loads(first_line)
+        assert message["jsonrpc"] == "2.0"
+        assert message["id"] == 1
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
     stdout = first_line + await proc.stdout.read()
     stderr = (await proc.stderr.read()).decode()
     assert b"Loading config" not in stdout
@@ -597,18 +609,21 @@ async def test_effective_snapshot_exposes_parent_only_custom_job(tmp_path):
         command=server_config["command"],
         args=server_config["args"],
         cwd=server_config["cwd"],
+        keep_alive=False,
     )
 
     await wrapper.start()
-    async with Client(transport, timeout=10) as client:
-        tools = await client.list_tools()
-        snapshot = Path(server_config["args"][server_config["args"].index("--config") + 1])
-        assert snapshot.exists()
-        assert set(json.loads(snapshot.read_text(encoding="utf-8"))["jobs"]) == {
-            "only_custom",
-            "referenced_helper",
-        }
-    await wrapper.close()
+    try:
+        async with Client(transport, timeout=None, init_timeout=STDIO_INIT_TIMEOUT) as client:
+            tools = await asyncio.wait_for(client.list_tools(), timeout=10)
+            snapshot = Path(server_config["args"][server_config["args"].index("--config") + 1])
+            assert snapshot.exists()
+            assert set(json.loads(snapshot.read_text(encoding="utf-8"))["jobs"]) == {
+                "only_custom",
+                "referenced_helper",
+            }
+    finally:
+        await wrapper.close()
 
     assert [tool.name for tool in tools] == ["only_custom"]
     assert not snapshot.exists()
@@ -638,6 +653,8 @@ async def test_compact_session_uses_native_thread_operation(tmp_path, monkeypatc
     observed = {}
 
     class FakeThread:
+        id = "thread-1"
+
         async def compact(self):
             observed["compacted"] = True
 
@@ -1186,3 +1203,440 @@ def test_default_config_provides_codex_oauth_wrapper(monkeypatch):
     assert "api_key" not in oauth
     assert codex["auth_mode"] == "api_key"
     assert codex["sandbox"] == "full-access"
+
+
+class _RecordingClient:
+    def __init__(self, fail: bool = False):
+        self.requests = []
+        self.fail = fail
+        self.loaded_threads = ["thread-1"]
+
+    async def request(self, method, params, *, response_model):
+        self.requests.append({"method": method, "params": params, "response_model": response_model})
+        if self.fail:
+            raise RuntimeError("unsubscribe failed")
+        if method == "thread/loaded/list":
+            return SimpleNamespace(data=self.loaded_threads, next_cursor=None)
+        return SimpleNamespace(status="unsubscribed")
+
+
+def _assert_unsubscribed(client, thread_id="thread-1"):
+    from openai_codex.generated.v2_all import ThreadUnsubscribeResponse
+
+    assert client.requests == [
+        {
+            "method": "thread/unsubscribe",
+            "params": {"threadId": thread_id},
+            "response_model": ThreadUnsubscribeResponse,
+        },
+    ]
+
+
+def _fake_codex(client, thread):
+    class FakeCodex:
+        def __init__(self, _config):
+            self._client = client
+
+        async def account(self):
+            return SimpleNamespace(account=SimpleNamespace())
+
+        async def close(self):
+            return None
+
+        async def thread_start(self, **_kwargs):
+            return thread
+
+        async def thread_resume(self, _thread_id, **_kwargs):
+            return thread
+
+    return FakeCodex
+
+
+@pytest.mark.asyncio
+async def test_reply_releases_thread_after_turn(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth")
+    client = _RecordingClient()
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def run(self, _inputs, **_kwargs):
+            return _TurnResult(final_response="done")
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+
+    result = await wrapper.reply("answer")
+    await wrapper.close()
+
+    assert result["last_message"] == "done"
+    _assert_unsubscribed(client)
+    assert not wrapper._thread_tool_contexts  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_reply_releases_thread_when_turn_fails(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth")
+    client = _RecordingClient()
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def run(self, _inputs, **_kwargs):
+            raise ValueError("turn failed")
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+
+    with pytest.raises(ValueError, match="turn failed"):
+        await wrapper.reply("answer")
+    await wrapper.close()
+
+    _assert_unsubscribed(client)
+    assert not wrapper._thread_tool_contexts  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_reply_ignores_unsubscribe_failure(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth")
+    client = _RecordingClient(fail=True)
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def run(self, _inputs, **_kwargs):
+            return _TurnResult(final_response="done")
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+
+    result = await wrapper.reply("answer")
+
+    assert result["last_message"] == "done"
+    assert len(client.requests) == 1
+    # The thread is still loaded, so its tool-context guard must survive.
+    assert "thread-1" in wrapper._thread_tool_contexts  # pylint: disable=protected-access
+
+    await wrapper.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_release_keeps_tool_context_guard_on_resume(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth")
+    client = _RecordingClient(fail=True)
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def run(self, _inputs, **_kwargs):
+            return _TurnResult(final_response="done")
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+
+    result = await wrapper.reply("answer", tool_context_id="ctx-a")
+    assert result["session_id"] == "thread-1"
+    assert len(client.requests) == 1
+
+    with pytest.raises(ValueError, match="cannot change"):
+        await wrapper.reply("answer", session_id="thread-1", tool_context_id="ctx-b")
+    await wrapper.close()
+
+
+@pytest.mark.asyncio
+async def test_release_threads_disabled_keeps_threads_loaded(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth", release_threads=False)
+    client = _RecordingClient()
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def run(self, _inputs, **_kwargs):
+            return _TurnResult(final_response="done")
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+
+    result = await wrapper.reply("answer")
+
+    assert result["last_message"] == "done"
+    assert not client.requests
+    assert "thread-1" in wrapper._thread_tool_contexts  # pylint: disable=protected-access
+
+    await wrapper.close()
+
+
+@pytest.mark.asyncio
+async def test_reply_stream_releases_thread_on_completion(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth")
+    client = _RecordingClient()
+
+    class FakeTurn:
+        id = "turn-1"
+
+        async def stream(self):
+            yield SimpleNamespace(
+                method="turn/completed",
+                payload=SimpleNamespace(
+                    turn=SimpleNamespace(
+                        id="turn-1",
+                        status=SimpleNamespace(value="completed"),
+                        duration_ms=1,
+                        error=None,
+                    ),
+                ),
+            )
+
+        async def interrupt(self):
+            raise AssertionError("Completed turns must not be interrupted")
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def turn(self, _inputs, **_kwargs):
+            return FakeTurn()
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+
+    chunks = [chunk async for chunk in wrapper.reply_stream("answer")]
+    await wrapper.close()
+
+    assert chunks[-1].chunk_type == ChunkEnum.REPLY_END
+    _assert_unsubscribed(client)
+    assert not wrapper._thread_tool_contexts  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_reply_stream_releases_thread_on_early_close(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth")
+    client = _RecordingClient()
+    interrupt_count = 0
+
+    class FakeTurn:
+        id = "turn-1"
+
+        async def stream(self):
+            yield SimpleNamespace(
+                method="turn/started",
+                payload=SimpleNamespace(turn=SimpleNamespace(id=self.id)),
+            )
+            await asyncio.Event().wait()
+
+        async def interrupt(self):
+            nonlocal interrupt_count
+            interrupt_count += 1
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def turn(self, _inputs, **_kwargs):
+            return FakeTurn()
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+
+    stream = wrapper.reply_stream("answer")
+    first = await anext(stream)
+    assert first.chunk_type == ChunkEnum.REPLY_START
+    await stream.aclose()
+    await wrapper.close()
+
+    assert interrupt_count == 1
+    _assert_unsubscribed(client)
+    assert not wrapper._thread_tool_contexts  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_compact_session_releases_thread(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path)
+    client = _RecordingClient()
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def compact(self):
+            return None
+
+    async def start():
+        return None
+
+    async def resume(_thread_id):
+        return FakeThread()
+
+    async def get_codex():
+        return SimpleNamespace(_client=client, thread_resume=resume)
+
+    monkeypatch.setattr(wrapper, "start", start)
+    monkeypatch.setattr(wrapper, "_get_codex", get_codex)
+
+    await wrapper.compact_session("thread-1")
+
+    _assert_unsubscribed(client)
+    assert not wrapper._thread_tool_contexts  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_reply_stream_releases_thread_when_turn_start_fails(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth")
+    client = _RecordingClient()
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def turn(self, _inputs, **_kwargs):
+            raise RuntimeError("turn/start failed")
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+
+    with pytest.raises(RuntimeError, match="turn/start failed"):
+        _ = [chunk async for chunk in wrapper.reply_stream("answer")]
+    await wrapper.close()
+
+    _assert_unsubscribed(client)
+    assert not wrapper._thread_tool_contexts  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_reply_stream_releases_thread_when_turn_start_is_cancelled(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth")
+    client = _RecordingClient()
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def turn(self, _inputs, **_kwargs):
+            raise asyncio.CancelledError("cancelled during turn/start")
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        _ = [chunk async for chunk in wrapper.reply_stream("answer")]
+    await wrapper.close()
+
+    _assert_unsubscribed(client)
+    assert not wrapper._thread_tool_contexts  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("original", "changed"),
+    [
+        ({"tool_context_id": "ctx-a"}, {"tool_context_id": "ctx-b"}),
+        ({"injected_job_kwargs": {"tenant": "a"}}, {"injected_job_kwargs": {"tenant": "b"}}),
+    ],
+)
+async def test_cancelled_reply_keeps_loaded_thread_constraints(tmp_path, monkeypatch, original, changed):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth")
+    client = _RecordingClient()
+    entered = asyncio.Event()
+
+    class FakeThread:
+        id = "thread-1"
+        calls = 0
+
+        async def run(self, _inputs, **_kwargs):
+            self.calls += 1
+            if self.calls > 1:
+                return _TurnResult(final_response="old MCP constraints")
+            entered.set()
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+    task = asyncio.create_task(wrapper.reply("answer", **original))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    try:
+        _assert_unsubscribed(client)
+        with pytest.raises(ValueError, match="cannot change"):
+            await wrapper.reply("answer", session_id="thread-1", **changed)
+    finally:
+        await wrapper.close()
+
+
+@pytest.mark.asyncio
+async def test_unloaded_thread_can_resume_with_new_constraints(tmp_path, monkeypatch):
+    wrapper, _job = _wrapper(tmp_path, auth_mode="oauth")
+    client = _RecordingClient()
+
+    class FakeThread:
+        id = "thread-1"
+
+        async def run(self, _inputs, **_kwargs):
+            return _TurnResult(final_response="done")
+
+    monkeypatch.setattr(
+        "reme.components.agent_wrapper.codex_agent_wrapper.AsyncCodex",
+        _fake_codex(client, FakeThread()),
+    )
+    try:
+        await wrapper.reply("answer", tool_context_id="ctx-a")
+        assert "thread-1" in wrapper._thread_tool_contexts
+        await wrapper.reply("answer", session_id="thread-1", tool_context_id="ctx-a")
+        with pytest.raises(ValueError, match="cannot change"):
+            await wrapper.reply("answer", session_id="thread-1", tool_context_id="ctx-b")
+        # Unsubscribe schedules delayed unload; only a later loaded-list query
+        # establishes that a resume will create a fresh runtime and MCP config.
+        client.loaded_threads.clear()
+        result = await wrapper.reply("answer", session_id="thread-1", tool_context_id="ctx-b")
+        assert result["last_message"] == "done"
+        assert json.loads(wrapper._thread_tool_contexts["thread-1"])["tool_context_id"] == "ctx-b"
+    finally:
+        await wrapper.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_second_page", [False, True])
+async def test_prune_thread_constraints_reads_all_pages_before_removing_entries(tmp_path, fail_second_page):
+    from openai_codex.generated.v2_all import ThreadLoadedListResponse
+
+    wrapper, _job = _wrapper(tmp_path)
+    wrapper._thread_tool_contexts = {"first": "a", "last": "b", "unloaded": "c"}
+    cursors = []
+
+    class Client:
+        async def request(self, method, params, *, response_model):
+            assert method == "thread/loaded/list"
+            assert response_model is ThreadLoadedListResponse
+            cursors.append(params["cursor"])
+            if params["cursor"] is None:
+                return ThreadLoadedListResponse(data=["first"], nextCursor="page-2")
+            if fail_second_page:
+                raise RuntimeError("loaded-list unavailable")
+            return ThreadLoadedListResponse(data=["last"])
+
+    await wrapper._prune_thread_tool_contexts(SimpleNamespace(_client=Client()))
+
+    assert cursors == [None, "page-2"]
+    expected = {"first": "a", "last": "b"}
+    if fail_second_page:
+        expected["unloaded"] = "c"
+    assert wrapper._thread_tool_contexts == expected

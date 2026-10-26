@@ -1,11 +1,7 @@
 """Focused tests for the Daily Paper plugin."""
 
 import datetime as dt
-import importlib
-import json
 from pathlib import Path
-import subprocess
-import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import frontmatter
@@ -41,8 +37,6 @@ from reme.components import ApplicationContext
 from reme.components.agent_wrapper.base_agent_wrapper import BaseAgentWrapper
 from reme.components.runtime_context import RuntimeContext
 from reme.config import expand_env_vars
-from reme.steps.cookbook.dingtalk import DingTalkMarkdownSendStep
-from reme.steps.cookbook.dingtalk import send as dingtalk_send
 
 PLUGIN_MANIFEST = yaml.safe_load(
     (Path(__file__).parents[1] / "src" / "reme_daily_paper" / "plugin.yaml").read_text(encoding="utf-8"),
@@ -63,7 +57,18 @@ def test_plugin_manifest_declares_complete_runtime_surface():
         "daily_paper_analyze_step",
         "daily_paper_digest_step",
     }
-    assert set(_plugin_config()["jobs"]) == {"daily_paper", "daily_paper_cron"}
+    jobs = _plugin_config()["jobs"]
+    assert set(jobs) == {"daily_paper", "daily_paper_cron"}
+    assert [step["backend"] for step in jobs["daily_paper"]["steps"]] == [
+        "daily_paper_collect_step",
+        "daily_paper_rank_step",
+        "daily_paper_select_step",
+        "daily_paper_analyze_step",
+        "daily_paper_digest_step",
+        "auto_tag_step",
+    ]
+    assert jobs["daily_paper"]["steps"][5] == {"backend": "auto_tag_step"}
+    assert jobs["daily_paper_cron"]["steps"] == jobs["daily_paper"]["steps"]
 
 
 class _QueuedAgentWrapper(BaseAgentWrapper):
@@ -564,27 +569,6 @@ async def test_daily_paper_steps_construct_source_clients_without_proxy(
     assert "proxy_url" not in arxiv_kwargs[0]
 
 
-def test_daily_paper_config_passes_dingtalk_environment(monkeypatch):
-    """The notifier receives all proactive-message settings from the environment."""
-    values = {
-        "DINGTALK_APP_KEY": "app-key",
-        "DINGTALK_APP_SECRET": "app-secret",
-        "DINGTALK_ROBOT_CODE": "robot-code",
-        "DINGTALK_CONVERSATION_IDS": "group-one,group-two",
-    }
-    for name, value in values.items():
-        monkeypatch.setenv(name, value)
-
-    step = _plugin_config()["jobs"]["daily_paper"]["steps"][-1]
-
-    assert {key: step[key] for key in ("app_key", "app_secret", "robot_code", "conversation_ids")} == {
-        "app_key": "app-key",
-        "app_secret": "app-secret",
-        "robot_code": "robot-code",
-        "conversation_ids": "group-one,group-two",
-    }
-
-
 def test_daily_paper_uses_agentscope_without_tools():
     """Daily Paper uses the shared tool-free agent."""
     config = _plugin_config()
@@ -644,6 +628,9 @@ def test_digest_prompt_uses_configured_daily_directory(tmp_path: Path):
 
     assert "`memory/`" in prompt
     assert "搜索结果不必局限于 `memory/`" in prompt
+    assert "最多调用两次 `search`" in prompt
+    assert "首要任务是基于它们生成每日论文速读" in prompt
+    assert "不得将搜索无结果误判为论文输入缺失" in prompt
     assert "[[memory/2026-07-01/旧文章.md" in prompt
     assert "[[daily/2026-07-01/" not in prompt
 
@@ -713,33 +700,6 @@ async def test_selection_retries_invalid_id_and_keeps_three_candidates(tmp_path:
     assert "outside the candidate pool" in agent.calls[1]["inputs"]
     assert "用户明确感兴趣的主题：context engineering" in agent.calls[1]["inputs"]
     assert "仅将这些 topics 作为主题偏好" in agent.calls[1]["inputs"]
-
-
-def test_reme_import_does_not_require_optional_dingtalk_stream():
-    """Importing ReMe must not eagerly load the core-only DingTalk dependency."""
-    script = """
-import builtins
-
-original_import = builtins.__import__
-
-def guarded_import(name, *args, **kwargs):
-    if name == "dingtalk_stream":
-        raise ModuleNotFoundError("blocked optional dependency")
-    return original_import(name, *args, **kwargs)
-
-builtins.__import__ = guarded_import
-import reme
-"""
-
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=Path(__file__).parents[3],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.asyncio
@@ -898,6 +858,12 @@ async def test_pipeline_filters_strict_yesterday_and_writes_outputs(
         "Clear evidence",
     ]
     assert digest.metadata["arxiv_ids"] == ["2607.10001", "2607.10004", "2607.10005"]
+    assert context["changes"] == [
+        {"change": "added", "path": "daily/2026-07-21/记忆代理研究.md"},
+        {"change": "added", "path": "daily/2026-07-21/上下文压缩研究.md"},
+        {"change": "added", "path": "daily/2026-07-21/持续学习研究.md"},
+        {"change": "added", "path": "daily/2026-07-21/今日智能体论文简报.md"},
+    ]
     assert cc_wrapper.calls[0]["kwargs"] == {"output_schema": PaperPickList}
     assert "用户感兴趣的主题" not in cc_wrapper.calls[0]["inputs"]
     assert "用户未提供明确的 topic 倾向" in cc_wrapper.calls[0]["inputs"]
@@ -933,7 +899,9 @@ async def test_pipeline_filters_strict_yesterday_and_writes_outputs(
     assert "调用 Read" not in digest_prompt
     assert "daily/2026-07-21" not in digest_prompt
     assert "长期记忆" not in digest_prompt
-    assert "先调用 `search` 检索已有记忆" in digest_prompt
+    assert "历史搜索只用于帮助构建 Wikilink，最多调用两次 `search`" in digest_prompt
+    assert "首要任务是基于它们生成每日论文速读" in digest_prompt
+    assert "不得将搜索无结果误判为论文输入缺失" in digest_prompt
     assert "搜索结果不必局限于 `daily/`" in digest_prompt
     assert "end_date" not in digest_prompt
     assert "limit=" not in digest_prompt
@@ -984,6 +952,10 @@ async def test_digest_force_migrates_old_fixed_filename_to_chinese_title(tmp_pat
     assert new_path.is_file()
     assert not old_path.exists()
     assert context["daily_paper_digest_path"] == "daily/2026-07-21/全新论文简报.md"
+    assert context["changes"] == [
+        {"change": "deleted", "path": "daily/2026-07-21/daily-paper-brief.md"},
+        {"change": "added", "path": "daily/2026-07-21/全新论文简报.md"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -1044,160 +1016,3 @@ async def test_digest_validates_model_generated_historical_wikilinks(tmp_path: P
     assert "非 daily 节点" in rendered and "[[digest/wiki/相关概念.md" not in rendered
     assert "越界路径" in rendered and "../outside.md" not in rendered
     assert "[[daily/2026-07-21/论文解读1.md]]" in rendered
-
-
-@pytest.mark.asyncio
-async def test_dingtalk_markdown_sends_groups_serially_in_configured_order(
-    tmp_path: Path,
-    monkeypatch,
-):
-    """The notifier gets one app token and posts once per group in list order."""
-    digest_path = tmp_path / "daily" / "2026-07-21" / "daily-paper-brief.md"
-    digest_path.parent.mkdir(parents=True)
-    digest_path.write_text(
-        frontmatter.dumps(
-            frontmatter.Post("# 今日论文\n\n测试内容", name="daily-paper-brief"),
-        ),
-        encoding="utf-8",
-    )
-    token_calls = 0
-    seen_payloads: list[dict] = []
-
-    def get_access_token(client):
-        nonlocal token_calls
-        token_calls += 1
-        assert client.credential.client_id == "app-key"
-        assert client.credential.client_secret == "app-secret"
-        return "app-access-token"
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/v1.0/robot/groupMessages/send"
-        assert request.headers["x-acs-dingtalk-access-token"] == "app-access-token"
-        seen_payloads.append(json.loads(request.content))
-        return httpx.Response(
-            200,
-            json={"processQueryKey": f"query-{len(seen_payloads)}"},
-        )
-
-    transport = httpx.MockTransport(handler)
-    transport_kwargs: dict = {}
-
-    def ipv4_transport(**kwargs):
-        transport_kwargs.update(kwargs)
-        return transport
-
-    dingtalk_stream = importlib.import_module("dingtalk_stream")
-    monkeypatch.setattr(
-        dingtalk_stream.DingTalkStreamClient,
-        "get_access_token",
-        get_access_token,
-    )
-    monkeypatch.setattr(dingtalk_send.httpx, "AsyncHTTPTransport", ipv4_transport)
-    app_context = ApplicationContext(workspace_dir=str(tmp_path))
-    context = RuntimeContext(markdown_path="daily/2026-07-21/daily-paper-brief.md")
-
-    step = DingTalkMarkdownSendStep(
-        app_context=app_context,
-        app_key="app-key",
-        app_secret="app-secret",
-        robot_code="robot-code",
-        conversation_ids=" group-one,group-two ",
-        title="ReMe Daily Paper",
-    )
-    step.logger = MagicMock()
-    response = await step(context)
-
-    assert token_calls == 1
-    assert transport_kwargs == {"local_address": "0.0.0.0"}
-    assert [payload["openConversationId"] for payload in seen_payloads] == [
-        "group-one",
-        "group-two",
-    ]
-    assert all(payload["robotCode"] == "robot-code" for payload in seen_payloads)
-    assert all(payload["msgKey"] == "sampleMarkdown" for payload in seen_payloads)
-    assert [json.loads(payload["msgParam"]) for payload in seen_payloads] == [
-        {"title": "ReMe Daily Paper", "text": "# 今日论文\n\n测试内容"},
-    ] * 2
-    assert response.metadata["dingtalk_configured_count"] == 2
-    assert response.metadata["dingtalk_sent_count"] == 2
-    logs = "\n".join(call.args[0] for call in step.logger.info.call_args_list)
-    assert "sending DingTalk Markdown" in logs
-    assert "delivery complete sent=2 total=2" in logs
-    assert all(value not in logs for value in ("app-key", "app-secret", "robot-code", "group-one", "group-two"))
-
-
-@pytest.mark.asyncio
-async def test_dingtalk_markdown_without_conversations_is_a_noop(tmp_path: Path):
-    """An empty conversation list keeps daily-paper generation usable without DingTalk."""
-    context = RuntimeContext(markdown_path="missing.md")
-
-    response = await DingTalkMarkdownSendStep(
-        app_context=ApplicationContext(workspace_dir=str(tmp_path)),
-    )(context)
-
-    assert response.success is True
-    assert response.metadata["dingtalk_configured_count"] == 0
-    assert response.metadata["dingtalk_sent_count"] == 0
-
-
-@pytest.mark.asyncio
-async def test_existing_daily_paper_is_reused_and_sent_to_dingtalk(
-    tmp_path: Path,
-    monkeypatch,
-):
-    """An idempotent daily-paper run skips generation but still notifies DingTalk."""
-    digest_path = tmp_path / "daily" / "2026-07-22" / "daily-paper-brief.md"
-    digest_path.parent.mkdir(parents=True)
-    digest_path.write_text(
-        frontmatter.dumps(
-            frontmatter.Post("# 已有日报\n\n复用正文", name="daily-paper-brief"),
-        ),
-        encoding="utf-8",
-    )
-    seen_payloads: list[dict] = []
-
-    dingtalk_stream = importlib.import_module("dingtalk_stream")
-    monkeypatch.setattr(
-        dingtalk_stream.DingTalkStreamClient,
-        "get_access_token",
-        lambda _client: "app-access-token",
-    )
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        seen_payloads.append(json.loads(request.content))
-        return httpx.Response(200, json={"processQueryKey": "query-1"})
-
-    transport = httpx.MockTransport(handler)
-
-    monkeypatch.setattr(
-        dingtalk_send.httpx,
-        "AsyncHTTPTransport",
-        lambda **_kwargs: transport,
-    )
-    app_context = ApplicationContext(workspace_dir=str(tmp_path))
-    context = RuntimeContext(date="2026-07-22")
-
-    await DailyPaperCollectStep(app_context=app_context)(context)
-    response = await DingTalkMarkdownSendStep(
-        app_context=app_context,
-        input_mapping={"daily_paper_digest_path": "markdown_path"},
-        app_key="app-key",
-        app_secret="app-secret",
-        robot_code="robot-code",
-        conversation_ids="existing-group",
-        title="ReMe Daily Paper",
-    )(context)
-
-    assert response.metadata["skipped"] is True
-    assert response.metadata["dingtalk_sent_count"] == 1
-    assert seen_payloads == [
-        {
-            "robotCode": "robot-code",
-            "openConversationId": "existing-group",
-            "msgKey": "sampleMarkdown",
-            "msgParam": json.dumps(
-                {"title": "ReMe Daily Paper", "text": "# 已有日报\n\n复用正文"},
-                ensure_ascii=False,
-            ),
-        },
-    ]

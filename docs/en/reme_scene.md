@@ -3,6 +3,15 @@
 This document describes how ReMe is used in real agent workflows. Directory names, Job names, and capability boundaries are
 based on the latest code under `reme/`.
 
+The CLI examples below use a two-stage service workflow. Start the service in one terminal and leave it running:
+
+```bash
+reme start config=default
+```
+
+Run the CLI examples below from another terminal, reusing that service. If the intended workspace already has a running
+service, use it. See [Configuration](./configuration.md) for model settings.
+
 The common ReMe pattern is:
 
 ```text
@@ -81,7 +90,7 @@ Run:
 reme auto_dream date=2026-05-18
 ```
 
-`auto_dream` is a three-step pipeline:
+`auto_dream` is a four-step pipeline:
 
 ```text
 dream_extract_step
@@ -92,6 +101,8 @@ dream_integrate_step
   decide CREATE / CORROBORATE / REFINE / CORRECT
 dream_finish_step
   checkpoint successfully processed daily inputs
+auto_tag_step
+  tag the entities in created or modified digest notes
 ```
 
 Outputs in this scenario:

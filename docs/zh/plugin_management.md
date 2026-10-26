@@ -68,17 +68,17 @@ reme plugins list --config default
 
 ## 安装插件包
 
-安装已发布的 distribution：
+使用包名安装已发布的 distribution：
 
 ```bash
-reme plugins install reme-auto-fin
+reme plugins install your-plugin-package
 ```
 
 安装指定版本或升级：
 
 ```bash
-reme plugins install 'reme-auto-fin==X.Y.Z'
-reme plugins install reme-auto-fin --upgrade
+reme plugins install 'your-plugin-package==X.Y.Z'
+reme plugins install your-plugin-package --upgrade
 ```
 
 安装本地插件项目：
@@ -153,7 +153,7 @@ reme start plugins='["auto-fin"]'
 override 优先。这个 mapping 是 `ApplicationConfig` 配置片段，并不是另一套配置 schema。插件 backend 只注册到该
 Application 的局部 registry。
 
-默认 HTTP service 启动后，可以通过 ReMe CLI client 或 HTTP 访问插件 Job：
+默认 HTTP service 启动后，在另一个终端通过 ReMe CLI client 或 HTTP 访问插件 Job：
 
 ```bash
 reme auto_fin topics="黄金,AI,存储芯片"
@@ -167,7 +167,9 @@ curl -s http://127.0.0.1:2333/auto_fin \
 
 当应用使用 MCP service 时，允许对外服务的插件 Job 会显示为 MCP tool。
 
-自定义应用配置需要提供插件的运行依赖，包括 `agent_wrapper.default`，以及 Auto Fin 使用的 `search` 和 `read` Jobs。
+自定义应用配置需要提供插件的运行依赖，包括 `agent_wrapper.default`、启用 tag index 的
+`file_store.default`，以及 Auto Fin 和自动标签使用的 `search`、`read`、`list_tags`、
+`frontmatter_read` 和 `frontmatter_update` Jobs。
 
 ## Benchmark 应用配置
 

@@ -13,8 +13,8 @@ their Job configuration under `application_defaults`. Enable the installed plugi
 ### 1. Install ReMe and Daily Paper
 
 ```bash
-python -m pip install "reme-ai[core]>=0.4.1.9"
-reme plugins install reme-daily-paper
+python -m pip install "reme-ai[core]>=0.4.1.12"
+reme plugins install plugins/daily_paper
 ```
 
 ### 2. Configure the model environment
@@ -45,11 +45,12 @@ curl -s http://127.0.0.1:2333/daily_paper \
   -d '{"topics":"Agent memory"}'
 ```
 
-To run the Job once without starting a long-lived service:
+For scripts that need to run once without a persistent service, see [One-shot Jobs](../../docs/en/services.md#one-shot-jobs).
+Normal usage follows the service startup and client invocation workflow above.
 
-```bash
-reme start plugins='["daily-paper"]' job=daily_paper topics="Agent memory"
-```
+Custom application configs must provide `agent_wrapper.default`, a `file_store.default` with an enabled tag index, and
+the `search`, `read`, `list_tags`, `frontmatter_read`, and `frontmatter_update` Jobs used by Daily Paper and automatic
+tagging.
 
 ## Pipeline
 
@@ -64,7 +65,7 @@ download and parse arXiv PDFs, then write three Chinese analyses
                  ↓
 use search + read to connect prior memory and generate a brief
                  ↓
-refresh the daily index and optionally send the brief to DingTalk
+generate memory tags; the background file watcher refreshes indexes
 ```
 
 `daily_paper_collect_step` concurrently reads the weekly and monthly rankings for the run date plus the strictly
@@ -81,8 +82,9 @@ PDFs and files without a text layer fail explicitly.
 
 `daily_paper_digest_step` treats those three analyses as the factual source and receives only the read-only
 `search` and `read` tools for linking earlier memory. Code validates historical wikilinks, appends links to all
-three source notes, and rebuilds the daily index. The optional `dingtalk_markdown_send_step` sends the final brief when
-conversation IDs are configured and otherwise skips without side effects.
+three source notes, and rebuilds the daily index. The workflow then runs `auto_tag_step` to update the memory-tag
+frontmatter of all three analyses and the final brief. The normal background file watcher observes those source-file
+changes and refreshes derived indexes.
 
 ## Parameters
 
@@ -100,15 +102,11 @@ Step-level defaults are `candidate_limit=20`, `rrf_k=60`, `hf_timeout=600`, `hf_
 
 The data clients automatically honor `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`. Manual runs enable the Hugging Face
 mirror with `use_hf_mirror=true`; the cron Job enables it by default and can use the official service with
-`DAILY_PAPER_USE_HF_MIRROR=false`. These environment variables override data sources and DingTalk settings:
+`DAILY_PAPER_USE_HF_MIRROR=false`. These environment variables override the data sources:
 
 ```dotenv
 HF_MIRROR_URL=https://hf-mirror.com
 ARXIV_MIRROR_URL=https://export.arxiv.org
-DINGTALK_APP_KEY=your-app-key
-DINGTALK_APP_SECRET=your-app-secret
-DINGTALK_ROBOT_CODE=your-robot-code
-DINGTALK_CONVERSATION_IDS=cid-group-one,cid-group-two
 ```
 
 ## Output
@@ -134,4 +132,4 @@ Network errors, too few candidates, invalid Agent output, and unparseable PDFs f
 python -m pytest plugins/daily_paper -v
 ```
 
-Unit tests mock the Hugging Face, arXiv, AgentScope, and DingTalk boundaries and do not contact external services.
+Unit tests mock the Hugging Face, arXiv, and AgentScope boundaries and do not contact external services.

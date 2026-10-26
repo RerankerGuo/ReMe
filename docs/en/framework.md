@@ -58,6 +58,7 @@ reme/
   plugin.py                  # installed plugin contract and entry-point loader
   config/
     default.yaml             # default service / jobs / components
+    cookbook.yaml            # Auto Fin + Daily Paper + DingTalk composition
     config_parser.py         # config=, dot notation, and env placeholder parsing
   components/
     component_registry.py    # backend registry and application-local copies
@@ -72,17 +73,17 @@ reme/
     file_chunker/            # Markdown / JSON / JSONL / generic text chunking
     file_catalog/            # change checkpoints
     as_llm/, as_embedding/   # model wrappers
+    as_decision_model/       # optional decision model adapters
     agent_wrapper/           # AgentScope / Claude Code / Codex wrappers
   steps/
     base_step.py             # BaseStep, Ref, dispatch_steps
     common/                  # version, help, health_check, status, chat
-    benchmark/               # LongMemEval / BEAM evaluation steps
-    cookbook/                # built-in cookbook support steps
     file_io/                 # read/write/edit/delete/move/frontmatter/daily
     index/                   # watch/init/update/search/traverse
     evolve/                  # auto_memory, auto_resource, auto_dream, proactive
     transfer/                # upload/download
 plugins/
+  dingtalk/                  # independent DingTalk integration plugin distribution
   auto-fin/                  # independent example plugin distribution
   daily_paper/               # independent paper-research plugin distribution
 integrations/
@@ -124,11 +125,15 @@ flowchart LR
     J --> K["client(action=action, **kwargs)"]
 ```
 
-Common commands:
+Start a service in one terminal and leave it running; omit `config` to use the default configuration:
 
 ```bash
 reme start
-reme start service.port=8181
+```
+
+From another terminal, call Jobs through the running service:
+
+```bash
 reme version
 reme search query="memory" limit=5
 reme search query="memory" backend=mcp
@@ -242,22 +247,27 @@ duplicate `(component_type, backend)` providers fail during assembly instead of 
 
 The legacy Python `Plugin` descriptor and `reme.configs` entry points remain accepted during migration. Configuration
 files can use `extends` to inherit another built-in, legacy plugin, or file-based configuration. See the independently
-packaged [Auto Fin](../../plugins/auto-fin/README.md) and [Daily Paper](../../plugins/daily_paper/README.md) plugins.
+packaged [DingTalk](../../plugins/dingtalk/README.md), [Auto Fin](../../plugins/auto-fin/README.md), and
+[Daily Paper](../../plugins/daily_paper/README.md) plugins.
 
 Plugin packages are managed locally and remain separate from per-application activation:
 
 ```bash
 reme plugins list
-reme plugins install reme-auto-fin
-reme plugins install reme-daily-paper
+reme plugins install plugins/dingtalk
+reme plugins install plugins/auto-fin
+reme plugins install plugins/daily_paper
 reme plugins show daily-paper
 reme plugins validate daily-paper
 reme plugins uninstall daily-paper
 
-reme start plugins='["auto-fin","daily-paper"]'
+reme start config=cookbook
 ```
 
 These management commands use the current Python interpreter's pip and never run through an HTTP or MCP service.
+The built-in `cookbook` configuration composes the three plugins, adds DingTalk delivery to the two report pipelines,
+and starts the DingTalk Agent bridge as a background Job. Enabling Auto Fin or Daily Paper alone keeps it independent
+from DingTalk.
 
 ### 4.3 Component.bind
 
@@ -532,6 +542,7 @@ Current default components in `reme/config/default.yaml`:
 | `service`         | singleton                       | `http`                                           | Default HTTP service.                                                          |
 | `tokenizer`       | `default`                       | `regex`                                          | BM25 tokenizer.                                                                |
 | `as_embedding`    | `default`                       | Not configured by default; example uses `openai` | Provides the embedding model wrapper after uncommenting the example config.    |
+| `as_decision_model`   | `default`                       | Not configured by default; example uses `agentscope` | Optional probabilistic decision model; demonstrated by the decision_demo config extending default. |
 | `embedding_store` | `default`                       | Not configured by default; example uses `local`  | Depends on `as_embedding: default` after uncommenting the example config.      |
 | `as_llm`          | `default`                       | `${LLM_BACKEND:-openai}`                         | LLM model wrapper.                                                             |
 | `agent_wrapper`   | `default`                       | `agentscope`                                     | AgentScope wrapper.                                                            |
@@ -651,9 +662,11 @@ execution model is required.
 
 ### 10.1 Adding a Normal Request Job
 
-Add the Job under `jobs:` in a YAML configuration:
+Save a configuration such as `/path/to/uppercase.yaml`, inheriting the default service and adding the Job:
 
 ```yaml
+extends: default
+
 jobs:
   uppercase:
     backend: base
@@ -670,10 +683,15 @@ jobs:
       - backend: uppercase_step
 ```
 
-Start and call it:
+Start that configuration in one terminal and leave it running:
 
 ```bash
-reme start
+reme start config=/path/to/uppercase.yaml
+```
+
+From another terminal, call the Job:
+
+```bash
 reme uppercase text="hello"
 ```
 

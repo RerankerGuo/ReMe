@@ -63,6 +63,11 @@ retarget inbound wikilinks. To see what happened on a day, start with `YYYY-MM-D
 
 ## Preserving the Original Information
 
+For retrying clients, `auto_memory` accepts an optional `request_id` of 1–128 characters. Keep the ID and input unchanged
+when retrying a batch: completed results are replayed without another memory-agent call; reuse with different input is
+rejected. Receipts live under the configured `metadata_dir/auto_memory_requests`. A process interruption before receipt
+commit may repeat an unfinished operation; arbitrary Agent file edits are not transactional.
+
 The distilled daily note is optimized for readability; a filtered source conversation record is retained for trust and
 verification.
 
@@ -77,6 +82,64 @@ session/
 
 Each daily note points to its corresponding conversation record. Saved messages omit tool-result blocks and base64 data
 blocks, preventing recalled memory and binary payloads from being mistaken for user-provided evidence later.
+
+## Images in Conversations
+
+Auto Memory can read images together with the surrounding conversation. Images are disabled by default; enable them for a
+call with `include_images=true`.
+
+Image input requires an `agentscope` wrapper with a vision-capable `as_llm` model and compatible formatter.
+Auto Memory uses that model to read the conversation, without generating captions first. When images are disabled or no
+image blocks are present, the existing text-only behavior is unchanged, including support for other wrappers.
+
+Pass images as top-level AgentScope `DataBlock` values in `messages`, with an `image/` media type. Text and images stay in
+their original order, with speaker and timestamp boundaries preserved. Base64 sources and HTTP(S) URLs pass unchanged to
+the formatter; images are not resized or transcoded. URLs are not downloaded and must be accessible to the model provider. For local
+files, submit Base64 instead of a `file://` URL; other URL schemes are also unsupported.
+
+With images enabled, Auto Memory saves each Base64 image's original bytes under the configured `session_dir`:
+
+```text
+session/images/<session_id>/msg-<encoded-message-id>-image-<block-index>.<ext>
+```
+
+The filename uses the message's `id` and the image's position among all content blocks, starting at zero; the extension
+comes from its media type. Keep session IDs, message IDs and block positions stable when resubmitting a conversation:
+an existing file at that path is reused without comparing its contents. Use a new message ID when replacing an image.
+Calls with images disabled or no images do not save attachments.
+
+Each image is accompanied by its exact source link in the model input. The memory prompt asks the Agent to cite that source
+beside the corresponding visual facts, for example:
+
+```markdown
+The diagram places Gateway before Worker and PostgreSQL. See [[session/images/session-a/msg-6d6573736167652d61-image-1.png]].
+```
+
+For URL images, the citation uses the original URL. Auto Memory also adds the supplied image sources to the daily note's
+`source_images` frontmatter, preserving existing entries. This list records provenance; the body links connect individual
+facts to their images. These session attachments are not watched as resources and do not trigger separate caption calls.
+
+The wrapper's `context_config.max_image_num` limits the number of images per call; Auto Memory rejects excess images rather
+than increasing the limit. The AgentScope default is 5. To use a higher limit, set it when starting the service:
+
+```bash
+reme start components.agent_wrapper.default.context_config.max_image_num=20
+```
+
+Then call the running service from another terminal, using the same workspace:
+
+```bash
+reme auto_memory session_id=session-a include_images=true messages='[...]'
+```
+
+Model and formatter limits still apply. When image input is enabled and images are present, Auto Memory checks the wrapper
+backend, URL schemes and image count before saving the conversation. Later formatter or provider errors are returned
+without retrying as text-only. As with text-only calls, those errors do not roll back an already saved conversation.
+
+Source JSONL saving follows the filtering rules above, including the omission of Base64 blocks. Saved attachments are not
+automatically restored into a replay of that JSONL; to process the images again, resubmit the original messages. Attachments
+already saved remain available if the model call fails or decides not to write a memory card; Auto Memory does not clean
+them up automatically. Local source paths can also be passed to `read_image`.
 
 ## Message Timestamps
 
@@ -109,6 +172,14 @@ reme auto_memory \
 ```
 
 ## What Happens Next
+
+The default `auto_memory` and `auto_memory_cc` jobs run `auto_tag_step` after recording memory. Only a daily note that
+was actually created or modified is tagged, using its final path after any rename. Claude Code callers still pass only
+`session_id`; repeated Stop events with no new messages skip both memory generation and tagging.
+
+Tags describe the document's central entities and are stored in the configured frontmatter key (`memory_tags` by default).
+Per-file tagging failures are reported in `metadata.auto_tag` while preserving the memory response. Calls without note
+changes do not automatically retry failed tagging; the existing file watcher updates the tag index asynchronously.
 
 Auto Memory only creates memory in the daily layer. To distill this material further into long-term `digest/` nodes, use
 [Auto Dream](./auto_dream.md). To search daily and digest content, use [Memory Search](./memory_search.md).

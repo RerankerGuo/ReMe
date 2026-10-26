@@ -47,17 +47,16 @@ and concise documentation together.
 - `reme/components/`: agent wrappers, model adapters, stores, catalogs, graphs, indexes, clients, tokenizers, and
   outbound proxies.
 - `reme/steps/`: registered job steps grouped by common, file I/O, index, evolve, cookbook, and transfer
-  concerns, plus shared benchmark base classes under `benchmark/`.
+  concerns.
 - `reme/utils/`: shared utilities, including service discovery, logging, web-static resolution, session I/O, token
   accounting, and wikilink handling.
 - `tests/unit/`: primary fast, isolated validation suite.
 - `tests/integration/`: service/model tests that may need credentials or external processes.
 - `reme_studio/`: ReMe Studio frontend source plus the independently published `reme_studio` Python package and
   `@agentscope-ai/reme_studio` npm static distribution.
-- `typescript/`: the independently published `@agentscope-ai/reme` package, including the shared TypeScript client and
-  DeepSeek Harness and OpenClaw adapters.
-- `plugins/`: installable ReMe extensions, including Auto Fin and LME/BEAM benchmark Steps and application presets.
-- `integrations/`: adapters that connect ReMe to external agent hosts, such as Claude Code, DSH, and Hermes Agent.
+- `plugins/`: installable ReMe extensions, including Auto Fin and LME/BEAM plugins.
+- `integrations/`: adapters that connect ReMe to external agent hosts, including the independent, self-contained DSH
+  and OpenClaw TypeScript plugins plus the Claude Code and Hermes Agent integrations.
 - `skills/`: standalone skills; `reme_memory` calls ReMe, while other skills may use separate tools or direct-file
   conventions.
 - `benchmark/` and `cookbook/`: runnable evaluations and example workflows.
@@ -80,7 +79,7 @@ existing async and typing patterns unless the task explicitly requires a new con
 
 - CLI syntax is `reme ACTION key=value ...`; leading `-` or `--` on arguments is accepted.
 - Nested overrides use dot notation. Values support null, booleans, numbers, JSON collections, and quoted JSON strings;
-  leading-zero numeric-looking values remain strings.
+  leading-zero numeric-looking values, `nan`, and `inf` remain strings.
 - `config=<name-or-path>` loads a discovered config name or a `.yaml`, `.yml`, or `.json` file. With no explicit config
   path, `default` is loaded when available.
 - Config files expand `${VAR}` and `${VAR:-default}` recursively. An undefined variable without a default is an error.
@@ -204,6 +203,9 @@ reference is generated from `reme/config/default.yaml`; do not edit generated pa
 
 - Preserve unrelated user changes in a dirty working tree.
 - Make the smallest coherent change and avoid unrelated cleanup or broad refactors.
+- Documentation should recommend two-stage service usage: start `reme start config=<name-or-path>` in one terminal,
+  then call `reme <job-name>` from another. Keep `reme start job=...` in explicitly labeled one-shot CLI sections;
+  service-private jobs must retain their documented local execution path.
 - Do not edit generated output when the source can be changed instead. The publish workflow builds
   `reme_studio/dist-static` and stages it under `reme_studio/src/reme_studio/static`; change `reme_studio/` source for
   frontend work.

@@ -14,10 +14,12 @@ ReMe 把记忆能力放在独立服务和用户拥有的 workspace 中。Agent �
 | 本机脚本或 Hook | ReMe CLI |
 | 应用后端 | HTTP Client |
 | 支持工具协议的 Agent | MCP |
-| TypeScript Agent | `@agentscope-ai/reme` |
-| Claude Code | MCP + Skill + Stop Hook |
+| DeepSeek Harness | [`@agentscope-ai/reme-dsh-plugin`](./integrations/dsh.md) profile bundle |
+| OpenClaw | [`@agentscope-ai/reme-openclaw-plugin`](./integrations/openclaw.md) |
+| Claude Code | [启动 ReMe 后安装插件](./integrations/claude-code.md) |
 | Hermes Agent | Memory provider adapter |
-| Codex 或其他 coding agent | `reme_memory` Skill 或 MCP |
+| Codex | [启动 ReMe 后安装插件](./integrations/codex.md) |
+| 其他 coding agent | `reme_memory` Skill 或 MCP |
 
 ## 通用接入循环
 
@@ -55,28 +57,50 @@ Skill 不应：
 - 把召回的工具结果再次写入对话来源；
 - 将密钥或敏感信息写入记忆。
 
-## TypeScript、OpenClaw 与 DeepSeek Harness
+## DeepSeek Harness
 
-统一 HTTP 客户端和包能力见 [TypeScript Agent 集成](./integrations/typescript.md)。宿主的完整安装、配置和运行说明见 [DeepSeek Harness](./integrations/dsh.md) 与 [OpenClaw](./integrations/openclaw.md) 指南。它们包含：
+安装自包含的 [DeepSeek Harness 插件](./integrations/dsh.md)：
 
-- HTTP Client；
-- DeepSeek Harness adapter；
-- OpenClaw adapter；
-- 构建与发布检查。
+```bash
+dsh plugin --profile web add @agentscope-ai/reme-dsh-plugin
+```
+
+发布页：[Awesome DSH Plugin](https://awesome-dsh-plugin.com/p/agentscope-ai/ReMe--integrations-dsh/) 和
+[npm](https://www.npmjs.com/package/@agentscope-ai/reme-dsh-plugin)。
+
+插件会在新的根 Agent 会话中注入长期记忆使用指引，并提供只读 `reme_search` 工具；它不会把所有历史记忆预先塞入上下文。
+已完成的用户/助手对话可以分批在后台交给 `auto_memory`，并由带时区的计划任务调用 `auto_dream` 整理 daily note。
+
+DSH 设置可配置服务地址、指引语言、搜索数量、捕获间隔、根 Agent 过滤和整理计划。ReMe Status 页面包含 Overview、
+Auto Memory、Memory Consolidation、Components、Journal 和 Personal Knowledge Base 六个视图。运行时计数只用于诊断，
+workspace 中的 Markdown 仍是持久事实来源。
+
+## OpenClaw
+
+安装独立发布的 [OpenClaw 插件](./integrations/openclaw.md)：
+
+```bash
+openclaw plugins install clawhub:@agentscope-ai/reme-openclaw-plugin
+```
+
+发布页：[ClawHub](https://clawhub.ai/agentscope-ai/plugins/reme-openclaw-plugin) 和
+[npm](https://www.npmjs.com/package/@agentscope-ai/reme-openclaw-plugin)。该插件拥有自己的宿主适配 ReMe HTTP 边界和发布周期。
 
 ## Claude Code
 
-仓库的 `integrations/claude_code/` 提供：
+先启动 ReMe HTTP 服务，再[安装 Claude Code 的 ReMe 插件](./integrations/claude-code.md)。
+插件统一提供自动召回、完成轮次记录和记忆查询，所需 Hook、MCP 工具与 Skill 随插件安装。
+本宿主使用插件安装流程接入。
 
-- streamable HTTP MCP 配置；
-- `reme-memory` Skill；
-- 会话停止时调用 `auto_memory_cc` 的 Hook。
+## Codex
 
-完整安装步骤以仓库中的 `integrations/claude_code/README.md` 为准。
+先启动 ReMe HTTP 服务，再[安装 Codex 的 ReMe 插件](./integrations/codex.md)，在 `/hooks` 中信任插件 Hook。
+新建会话后即可使用自动召回、记录和插件提供的记忆工具。本宿主同样使用插件安装流程接入。
+两端各自保存插件配置与重试队列，记忆存储和整理由 ReMe 服务负责。
 
 ## Hermes Agent
 
-`integrations/hermes_agent/` 提供 memory provider：模型调用前检索相关记忆，每轮结束后异步调用 `auto_memory`。完整配置见该目录 README。
+`integrations/hermes_agent/` 提供 HTTP 和 Embedded 双模式 memory provider：模型调用前检索相关记忆，每轮结束后异步调用 `auto_memory`，并通过 Hermes 通用配置面板展示设置。完整配置见该目录 README。
 
 ## 生产接入建议
 

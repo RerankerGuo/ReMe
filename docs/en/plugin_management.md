@@ -72,17 +72,17 @@ by another running process is not a global enable state.
 
 ## Install a plugin package
 
-Install a published distribution:
+Install a published distribution by its package name:
 
 ```bash
-reme plugins install reme-auto-fin
+reme plugins install your-plugin-package
 ```
 
 Install or upgrade a pinned version:
 
 ```bash
-reme plugins install 'reme-auto-fin==X.Y.Z'
-reme plugins install reme-auto-fin --upgrade
+reme plugins install 'your-plugin-package==X.Y.Z'
+reme plugins install your-plugin-package --upgrade
 ```
 
 Install a local plugin project:
@@ -159,7 +159,7 @@ When `config` is omitted, ReMe loads `default.yaml`. The plugin's `application_d
 so explicit config values and CLI overrides win. This mapping is an `ApplicationConfig` fragment, not a separate
 configuration schema. The plugin backends are registered only in that Application's local registry.
 
-After the default HTTP service starts, access plugin Jobs through ReMe's CLI client or HTTP:
+After the default HTTP service starts, access plugin Jobs from another terminal through ReMe's CLI client or HTTP:
 
 ```bash
 reme auto_fin topics="黄金,AI,存储芯片"
@@ -173,8 +173,9 @@ curl -s http://127.0.0.1:2333/auto_fin \
 
 When the application uses an MCP service, service-enabled plugin Jobs appear as MCP tools instead.
 
-Custom application configs must provide the plugin's runtime dependencies, including an `agent_wrapper.default` and
-the `search` and `read` Jobs used by Auto Fin.
+Custom application configs must provide the plugin's runtime dependencies, including an `agent_wrapper.default`, a
+`file_store.default` with an enabled tag index, and the `search`, `read`, `list_tags`, `frontmatter_read`, and
+`frontmatter_update` Jobs used by Auto Fin and automatic tagging.
 
 ## Benchmark application presets
 

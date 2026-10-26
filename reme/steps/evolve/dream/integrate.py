@@ -57,10 +57,11 @@ class DreamIntegrateStep(BaseStep):
 
     async def execute(self):
         assert self.context is not None
+        self.context["changes"] = []
         state = state_from_context(self)
         if not state.units:
             self.logger.info(f"[{self.name}] skip no units")
-            return self._finish(state, True, "No dream units to integrate")
+            return self._finish(state, not state.errors, "No dream units to integrate")
         if not llm_available(self):
             err = "no llm configured; dream integrate requires an LLM"
             state.errors.append(err)
@@ -81,8 +82,16 @@ class DreamIntegrateStep(BaseStep):
         for bucket in DreamBucketEnum:
             (workspace / digest_dir / bucket.value).mkdir(parents=True, exist_ok=True)
         self.logger.info(f"[{self.name}] digest dirs ready buckets={len(list(DreamBucketEnum))}")
+        # Compare the whole run so retries and later units updating a newly
+        # created file still emit one "added" change for the final file.
+        before = _snapshot_digest(workspace, digest_dir)
         for i, unit in enumerate(state.units, start=1):
             await self._integrate_one(state, unit, i, workspace, digest_dir)
+        after = _snapshot_digest(workspace, digest_dir)
+        self.context["changes"] = [
+            {"change": "modified" if path in before else "added", "path": path}
+            for path in _changed_digest_paths(before, after)
+        ]
         state.failed_paths = sorted(set(state.failed_paths))
         answer = (
             f"Integrated {len(state.integrate_results)} unit(s); skipped {len(state.skipped_units)} unit(s); "
@@ -205,10 +214,10 @@ class DreamIntegrateStep(BaseStep):
                     )
                     before = after
                     continue
-                # After the bounded retry, checkpoint the source so malformed input cannot loop forever.
-                self._record_skipped(state, unit, bucket, paths, e)
-                self.logger.warning(
-                    f"[{self.name}] unit {index}/{len(state.units)} skipped invalid receipt after retry: "
+                # Without a valid receipt or recoverable write, keep sources eligible for retry.
+                self._record_failure(state, unit, paths, e)
+                self.logger.error(
+                    f"[{self.name}] unit {index}/{len(state.units)} failed invalid receipt after retry: "
                     f"{type(e).__name__}: {e}",
                 )
                 return
@@ -329,18 +338,6 @@ class DreamIntegrateStep(BaseStep):
             target_path=target_path,
             note=f"Recovered from {type(error).__name__}: agent receipt unavailable",
         )
-
-    @classmethod
-    def _record_skipped(cls, state, unit: dict, bucket: str, paths: list[str], error: Exception) -> None:
-        message = f"unit {unit.get('name', '')!r} skipped: unusable agent receipt ({type(error).__name__})"
-        key = cls._unit_key(unit, bucket, paths)
-        if not any(
-            cls._unit_key(item, str(item.get("bucket") or ""), [str(p) for p in item.get("paths") or []]) == key
-            for item in state.skipped_units
-        ):
-            state.skipped_units.append({**unit, "bucket": bucket, "paths": paths, "reason": message})
-        if message not in state.warnings:
-            state.warnings.append(message)
 
     @staticmethod
     def _record_failure(state, unit: dict, paths: list[str], error: Exception) -> None:

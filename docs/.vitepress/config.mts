@@ -106,6 +106,7 @@ function nav(language: "zh" | "en"): DefaultTheme.NavItem[] {
   return [
     { text: zh ? "首页" : "Home", link: `/${language}/` },
     { text: zh ? "文档" : "Docs", link: `/${language}/quick_start` },
+    { text: zh ? "体验Studio" : "Try Studio", link: `/studio/?lang=${language}`, target: "_self" },
     { text: zh ? "集成" : "Integrations", link: `/${language}/integrations` },
     { text: zh ? "插件" : "Plugins", link: `/${language}/plugin_management` },
     { text: zh ? "评测" : "Benchmarks", link: `/${language}/benchmarks/longmemeval` },
@@ -125,6 +126,8 @@ function docsSidebar(language: "zh" | "en"): DefaultTheme.SidebarItem[] {
         { text: zh ? "快速开始" : "Quick Start", link: `/${language}/quick_start` },
         { text: zh ? "基础配置" : "Configuration", link: `/${language}/configuration` },
         { text: zh ? "服务与部署" : "Services and Deployment", link: `/${language}/services` },
+        { text: zh ? "Docker 部署" : "Docker Deployment", link: `/${language}/docker` },
+        { text: "ReMe Studio", link: `/${language}/workspace/studio` },
       ],
     },
     {
@@ -145,6 +148,7 @@ function docsSidebar(language: "zh" | "en"): DefaultTheme.SidebarItem[] {
         { text: "Auto Resource", link: `/${language}/auto_resource` },
         { text: "Auto Dream", link: `/${language}/auto_dream` },
         { text: "Proactive", link: `/${language}/proactive` },
+        { text: zh ? "决策模型上下文压缩" : "Context Compaction", link: `/${language}/context_compaction` },
       ],
     },
     {
@@ -176,8 +180,8 @@ function integrationsSidebar(language: "zh" | "en"): DefaultTheme.SidebarItem[] 
     items: [
       { text: zh ? "集成总览" : "Overview", link: `/${language}/integrations` },
       { text: "Claude Code", link: `/${language}/integrations/claude-code` },
+      { text: "Codex", link: `/${language}/integrations/codex` },
       { text: "Hermes Agent", link: `/${language}/integrations/hermes` },
-      { text: zh ? "TypeScript 客户端" : "TypeScript Client", link: `/${language}/integrations/typescript` },
       { text: "DeepSeek Harness", link: `/${language}/integrations/dsh` },
       { text: "OpenClaw", link: `/${language}/integrations/openclaw` },
     ],
@@ -186,25 +190,18 @@ function integrationsSidebar(language: "zh" | "en"): DefaultTheme.SidebarItem[] 
 
 function pluginsSidebar(language: "zh" | "en"): DefaultTheme.SidebarItem[] {
   const zh = language === "zh";
-  return [
-    {
-      text: zh ? "工作区" : "Workspace",
-      collapsed: false,
-      items: [{ text: "ReMe Studio", link: `/${language}/workspace/studio` }],
-    },
-    {
-      text: zh ? "插件" : "Plugins",
-      collapsed: false,
-      items: [
-        { text: zh ? "插件管理" : "Plugin Management", link: `/${language}/plugin_management` },
-        { text: zh ? "插件开发" : "Plugin Development", link: `/${language}/plugin_development` },
-        { text: zh ? "每日论文" : "Daily Paper", link: `/${language}/plugins/daily-paper` },
-        { text: "Auto Fin", link: `/${language}/plugins/auto-fin` },
-        { text: "LME", link: `/${language}/plugins/lme` },
-        { text: "BEAM", link: `/${language}/plugins/beam` },
-      ],
-    },
-  ];
+  return [{
+    text: zh ? "插件" : "Plugins",
+    collapsed: false,
+    items: [
+      { text: zh ? "插件管理" : "Plugin Management", link: `/${language}/plugin_management` },
+      { text: zh ? "插件开发" : "Plugin Development", link: `/${language}/plugin_development` },
+      { text: zh ? "每日论文" : "Daily Paper", link: `/${language}/plugins/daily-paper` },
+      { text: "Auto Fin", link: `/${language}/plugins/auto-fin` },
+      { text: "LME", link: `/${language}/plugins/lme` },
+      { text: "BEAM", link: `/${language}/plugins/beam` },
+    ],
+  }];
 }
 
 function benchmarksSidebar(language: "zh" | "en"): DefaultTheme.SidebarItem[] {
@@ -223,12 +220,24 @@ function benchmarksSidebar(language: "zh" | "en"): DefaultTheme.SidebarItem[] {
 
 function singlePageSidebar(language: "zh" | "en", page: "blog" | "faq"): DefaultTheme.SidebarItem[] {
   const zh = language === "zh";
+  if (page === "blog") {
+    return [{
+      text: zh ? "ReMe 博客" : "ReMe Blog",
+      link: `/${language}/reme-blog`,
+      collapsed: false,
+      items: [
+        { text: zh ? "ReMe介绍" : "About ReMe", link: `/${language}/reme-blog` },
+        { text: zh ? "记忆标签" : "Memory Tags", link: `/${language}/blog_20260920` },
+        { text: zh ? "图片记忆" : "Image Memory", link: `/${language}/blog_20261009` },
+      ],
+    }];
+  }
   return [{
-    text: page === "blog" ? (zh ? "ReMe 博客" : "ReMe Blog") : (zh ? "帮助" : "Help"),
+    text: zh ? "帮助" : "Help",
     collapsed: false,
     items: [{
-      text: page === "blog" ? (zh ? "产品故事" : "Product Story") : (zh ? "常见问题" : "Frequently Asked Questions"),
-      link: `/${language}/${page === "blog" ? "reme-blog" : "faq"}`,
+      text: zh ? "常见问题" : "Frequently Asked Questions",
+      link: `/${language}/faq`,
     }],
   }];
 }
@@ -236,12 +245,13 @@ function singlePageSidebar(language: "zh" | "en", page: "blog" | "faq"): Default
 function sidebars(language: "zh" | "en"): DefaultTheme.SidebarMulti {
   return {
     [`/${language}/integrations`]: integrationsSidebar(language),
-    [`/${language}/workspace/`]: pluginsSidebar(language),
+    [`/${language}/workspace/`]: [],
     [`/${language}/plugins/`]: pluginsSidebar(language),
     [`/${language}/plugin_management`]: pluginsSidebar(language),
     [`/${language}/plugin_development`]: pluginsSidebar(language),
     [`/${language}/benchmarks/`]: benchmarksSidebar(language),
     [`/${language}/reme-blog`]: singlePageSidebar(language, "blog"),
+    [`/${language}/blog_`]: singlePageSidebar(language, "blog"),
     [`/${language}/faq`]: singlePageSidebar(language, "faq"),
     [`/${language}/`]: docsSidebar(language),
   };

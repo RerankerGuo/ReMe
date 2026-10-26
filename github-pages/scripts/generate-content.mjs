@@ -11,13 +11,14 @@ const externalDocuments = [
   ["zh/overview.md", "README_ZH.md"],
   ["en/overview.md", "README.md"],
   ["en/integrations/claude-code.md", "integrations/claude_code/README.md"],
+  ["zh/integrations/claude-code.md", "integrations/claude_code/README_ZH.md"],
+  ["en/integrations/codex.md", "integrations/codex/README.md"],
+  ["zh/integrations/codex.md", "integrations/codex/README_ZH.md"],
   ["en/integrations/hermes.md", "integrations/hermes_agent/README.md"],
-  ["zh/integrations/typescript.md", "typescript/README_ZH.md"],
-  ["en/integrations/typescript.md", "typescript/README.md"],
-  ["zh/integrations/dsh.md", "typescript/docs/dsh.zh-CN.md"],
-  ["en/integrations/dsh.md", "typescript/docs/dsh.md"],
-  ["zh/integrations/openclaw.md", "typescript/docs/openclaw.zh-CN.md"],
-  ["en/integrations/openclaw.md", "typescript/docs/openclaw.md"],
+  ["zh/integrations/dsh.md", "integrations/dsh/README_ZH.md"],
+  ["en/integrations/dsh.md", "integrations/dsh/README.md"],
+  ["zh/integrations/openclaw.md", "integrations/openclaw/README_ZH.md"],
+  ["en/integrations/openclaw.md", "integrations/openclaw/README.md"],
   ["zh/workspace/studio.md", "reme_studio/README_ZH.md"],
   ["en/workspace/studio.md", "reme_studio/README.md"],
   ["zh/plugins/daily-paper.md", "plugins/daily_paper/README_ZH.md"],
@@ -53,35 +54,54 @@ const externalDocumentRewrites = {
     ['src="docs/figure/', 'src="../figure/'],
     ["(docs/zh/", "(./"],
   ],
-  "typescript/README.md": [
-    ["(./README_ZH.md)", "(/zh/integrations/typescript)"],
-    ["(./docs/dsh.md)", "(/en/integrations/dsh)"],
-    ["(./docs/dsh.zh-CN.md)", "(/zh/integrations/dsh)"],
-    ["(./docs/openclaw.md)", "(/en/integrations/openclaw)"],
-    ["(./docs/openclaw.zh-CN.md)", "(/zh/integrations/openclaw)"],
-    ["(./figures/dsh/", "(/figures/dsh/"],
+  "integrations/claude_code/README.md": [
+    ["(./README_ZH.md)", "(/zh/integrations/claude-code)"],
   ],
-  "typescript/README_ZH.md": [
-    ["(./README.md)", "(/en/integrations/typescript)"],
-    ["(./docs/dsh.md)", "(/en/integrations/dsh)"],
-    ["(./docs/dsh.zh-CN.md)", "(/zh/integrations/dsh)"],
-    ["(./docs/openclaw.md)", "(/en/integrations/openclaw)"],
-    ["(./docs/openclaw.zh-CN.md)", "(/zh/integrations/openclaw)"],
-    ["(./figures/dsh/", "(/figures/dsh/"],
+  "integrations/claude_code/README_ZH.md": [
+    ["(./README.md)", "(/en/integrations/claude-code)"],
   ],
-  "typescript/docs/dsh.md": [
-    ["(./dsh.zh-CN.md)", "(/zh/integrations/dsh)"],
-    ["(../figures/dsh/", "(/figures/dsh/"],
+  "integrations/codex/README.md": [
+    ["(./README_ZH.md)", "(/zh/integrations/codex)"],
+    ["(../../docs/en/configuration.md)", "(/en/configuration)"],
+    ["(./figures/README.md)", "(https://github.com/agentscope-ai/ReMe/blob/main/integrations/codex/figures/README.md)"],
+    ["(./figures/", "(/figures/codex/"],
   ],
-  "typescript/docs/dsh.zh-CN.md": [
-    ["(./dsh.md)", "(/en/integrations/dsh)"],
-    ["(../figures/dsh/", "(/figures/dsh/"],
+  "integrations/codex/README_ZH.md": [
+    ["(./README.md)", "(/en/integrations/codex)"],
+    ["(../../docs/zh/configuration.md)", "(/zh/configuration)"],
+    ["(./figures/README.md)", "(https://github.com/agentscope-ai/ReMe/blob/main/integrations/codex/figures/README.md)"],
+    ["(./figures/", "(/figures/codex/"],
   ],
-  "typescript/docs/openclaw.md": [
-    ["(./openclaw.zh-CN.md)", "(/zh/integrations/openclaw)"],
+  "integrations/dsh/README.md": [
+    ["(./README_ZH.md)", "(/zh/integrations/dsh)"],
+    ["(./figures/", "(/figures/dsh/"],
   ],
-  "typescript/docs/openclaw.zh-CN.md": [
-    ["(./openclaw.md)", "(/en/integrations/openclaw)"],
+  "integrations/dsh/README_ZH.md": [
+    ["(./figures/", "(/figures/dsh/"],
+  ],
+  "integrations/openclaw/README.md": [
+    ["(./README_ZH.md)", "(/zh/integrations/openclaw)"],
+    ["(./figures/", "(/figures/openclaw/"],
+  ],
+  "integrations/openclaw/README_ZH.md": [
+    ["(./README.md)", "(/en/integrations/openclaw)"],
+    ["(./figures/", "(/figures/openclaw/"],
+  ],
+  "integrations/hermes_agent/README.md": [
+    ["(README_ZH.md)", "(/zh/integrations/hermes)"],
+    ["(figures/", "(/figures/hermes/"],
+  ],
+  "reme_studio/README.md": [
+    ["(./README_ZH.md)", "(/zh/workspace/studio)"],
+    ["(./figures/", "(/figures/studio/"],
+    ["(https://github.com/agentscope-ai/ReMe/blob/main/reme_studio/README_ZH.md)", "(/zh/workspace/studio)"],
+    ["(https://raw.githubusercontent.com/agentscope-ai/ReMe/main/reme_studio/figures/", "(/figures/studio/"],
+  ],
+  "reme_studio/README_ZH.md": [
+    ["(./README.md)", "(/en/workspace/studio)"],
+    ["(./figures/", "(/figures/studio/"],
+    ["(https://github.com/agentscope-ai/ReMe/blob/main/reme_studio/README.md)", "(/en/workspace/studio)"],
+    ["(https://raw.githubusercontent.com/agentscope-ai/ReMe/main/reme_studio/figures/", "(/figures/studio/"],
   ],
 };
 
@@ -222,6 +242,9 @@ await cp(path.join(repoDir, "docs"), outputDir, {
   filter: (source) => ![".DS_Store", "plans"].includes(path.basename(source)),
 });
 await cp(path.join(siteDir, "public", "CNAME"), path.join(outputDir, "public", "CNAME"));
+await cp(path.join(siteDir, "public", "ecosystem"), path.join(outputDir, "public", "ecosystem"), {
+  recursive: true,
+});
 await cp(path.join(repoDir, "docs/figure/reme-icon.svg"), path.join(outputDir, "public", "reme-icon.svg"));
 await cp(path.join(repoDir, "docs/figure/reme-logo-fashion.svg"), path.join(outputDir, "public", "reme-logo.svg"));
 
@@ -236,7 +259,20 @@ for (const [destination, source] of externalDocuments) {
   sourceMap[destination] = source;
 }
 
-await cp(path.join(repoDir, "typescript/figures/dsh"), path.join(outputDir, "public/figures/dsh"), {
+await cp(path.join(repoDir, "integrations/codex/figures"), path.join(outputDir, "public/figures/codex"), {
+  recursive: true,
+  filter: (source) => !source.endsWith(".md"),
+});
+await cp(path.join(repoDir, "integrations/dsh/figures"), path.join(outputDir, "public/figures/dsh"), {
+  recursive: true,
+});
+await cp(path.join(repoDir, "integrations/openclaw/figures"), path.join(outputDir, "public/figures/openclaw"), {
+  recursive: true,
+});
+await cp(path.join(repoDir, "integrations/hermes_agent/figures"), path.join(outputDir, "public/figures/hermes"), {
+  recursive: true,
+});
+await cp(path.join(repoDir, "reme_studio/figures"), path.join(outputDir, "public/figures/studio"), {
   recursive: true,
 });
 

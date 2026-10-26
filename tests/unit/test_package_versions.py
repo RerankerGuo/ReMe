@@ -38,6 +38,9 @@ def test_studio_packages_have_independent_identity() -> None:
     daily_paper_config = tomllib.loads(
         (REPOSITORY / "plugins" / "daily_paper" / "pyproject.toml").read_text(encoding="utf-8"),
     )
+    dingtalk_config = tomllib.loads(
+        (REPOSITORY / "plugins" / "dingtalk" / "pyproject.toml").read_text(encoding="utf-8"),
+    )
 
     assert studio_config["project"]["name"] == "reme_studio"
     assert npm_config["name"] == "@agentscope-ai/reme_studio"
@@ -56,10 +59,32 @@ def test_studio_packages_have_independent_identity() -> None:
     assert main_config["project"]["optional-dependencies"]["core"].count("reme-ai[as]") == 1
     assert main_config["project"]["optional-dependencies"]["core"].count("reme_studio") == 1
     assert "qwenpaw" not in main_config["project"]["optional-dependencies"]
-    assert auto_fin_config["project"]["version"] == "0.1.2"
-    assert daily_paper_config["project"]["version"] == "0.1.2"
-    assert main_config["tool"]["setuptools"]["packages"]["find"]["include"] == ["reme", "reme.*"]
+    assert auto_fin_config["project"]["version"] == "0.1.3"
+    assert daily_paper_config["project"]["version"] == "0.1.3"
+    assert dingtalk_config["project"]["version"] == "0.1.0"
+    assert main_config["tool"]["setuptools"]["packages"]["find"]["include"] == [
+        "reme",
+        "reme.*",
+        "deploy",
+        "deploy.*",
+    ]
     assert "reme_studio*" in main_config["tool"]["setuptools"]["packages"]["find"]["exclude"]
+
+
+def test_typescript_host_plugins_are_independent_packages() -> None:
+    """Keep each host adapter self-contained instead of restoring a shared npm package."""
+    manifests = {
+        host: json.loads((REPOSITORY / "integrations" / host / "package.json").read_text(encoding="utf-8"))
+        for host in ("dsh", "openclaw")
+    }
+
+    assert manifests["dsh"]["name"] == "@agentscope-ai/reme-dsh-plugin"
+    assert manifests["openclaw"]["name"] == "@agentscope-ai/reme-openclaw-plugin"
+    assert manifests["dsh"]["version"] == "0.1.3"
+    assert manifests["openclaw"]["version"] == "0.1.1"
+    assert manifests["dsh"].get("dependencies", {}) == {}
+    assert manifests["openclaw"].get("dependencies", {}) == {"typebox": "1.3.19"}
+    assert not (REPOSITORY / "typescript").exists()
 
 
 def _write_version_fixture(repository: Path) -> None:
@@ -167,8 +192,8 @@ def test_auto_fin_requires_reme_base() -> None:
 
     assert len(reme_requirements) == 1
     assert not reme_requirements[0].extras
-    assert Version("0.4.1.8") not in reme_requirements[0].specifier
-    assert Version("0.4.1.9") in reme_requirements[0].specifier
+    assert Version("0.4.1.11") not in reme_requirements[0].specifier
+    assert Version("0.4.1.12") in reme_requirements[0].specifier
 
 
 def test_daily_paper_license_matches_repository() -> None:
@@ -185,9 +210,29 @@ def test_daily_paper_declares_runtime_dependencies() -> None:
     by_name = {requirement.name: requirement for requirement in requirements}
 
     assert not by_name["reme-ai"].extras
-    assert Version("0.4.1.8") not in by_name["reme-ai"].specifier
-    assert Version("0.4.1.9") in by_name["reme-ai"].specifier
+    assert Version("0.4.1.11") not in by_name["reme-ai"].specifier
+    assert Version("0.4.1.12") in by_name["reme-ai"].specifier
     assert "pypdf" in by_name
+
+
+def test_dingtalk_package_metadata_is_self_contained() -> None:
+    """Keep the independently distributed DingTalk license and runtime dependencies complete."""
+    plugin_dir = REPOSITORY / "plugins" / "dingtalk"
+    assert (plugin_dir / "LICENSE").read_text(encoding="utf-8") == (REPOSITORY / "LICENSE").read_text(
+        encoding="utf-8",
+    )
+    config = tomllib.loads((plugin_dir / "pyproject.toml").read_text(encoding="utf-8"))
+    requirements = [Requirement(value) for value in config["project"]["dependencies"]]
+    by_name = {requirement.name: requirement for requirement in requirements}
+
+    assert set(by_name) == {"dingtalk-stream", "reme-ai"}
+    assert not by_name["reme-ai"].extras
+    assert Version("0.4.1.11") not in by_name["reme-ai"].specifier
+    assert Version("0.4.1.12") in by_name["reme-ai"].specifier
+
+    main_config = tomllib.loads((REPOSITORY / "pyproject.toml").read_text(encoding="utf-8"))
+    core_requirements = {Requirement(value).name for value in main_config["project"]["optional-dependencies"]["core"]}
+    assert "dingtalk-stream" not in core_requirements
 
 
 def test_studio_package_preparation_preserves_static_gitignore(monkeypatch, tmp_path: Path) -> None:
@@ -198,3 +243,13 @@ def test_studio_package_preparation_preserves_static_gitignore(monkeypatch, tmp_
 
     assert (static_dir / "index.html").is_file()
     assert (static_dir / ".gitignore").read_text(encoding="utf-8") == package_studio.STATIC_GITIGNORE
+
+
+def test_qwen_tokenizer_dependency_is_optional() -> None:
+    """Exact Qwen tokenization is opt-in and included in the full install."""
+    config = tomllib.loads((REPOSITORY / "pyproject.toml").read_text(encoding="utf-8"))
+    extras = config["project"]["optional-dependencies"]
+    assert extras["qwen-tokenizer"] == ["tokenizers>=0.21,<1"]
+    assert "tokenizers" not in {Requirement(value).name for value in config["project"]["dependencies"]}
+    assert "tokenizers" not in {Requirement(value).name for value in extras["core"]}
+    assert "reme-ai[qwen-tokenizer]" in extras["full"]
