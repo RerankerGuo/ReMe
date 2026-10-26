@@ -2,8 +2,9 @@
 
 Cheap structured read — frontmatter only, no body. Use ``body:read``
 for the post-frontmatter content slice, or whole-file ``read`` when
-you want both at once. The answer is textual — ``- key: value`` per
-line — because MCP callers only ever see ``answer``; the parsed
+you want both at once. The answer is textual — one JSON-encoded
+``- "key": value`` entry per line, so every key and value stays on a
+single line — because MCP callers only ever see ``answer``; the parsed
 mapping itself is returned in ``metadata["frontmatter"]`` (and
 ``exists: false`` in metadata when the target doesn't exist).
 
@@ -22,32 +23,24 @@ from ...components import R
 
 
 def _render_value(value) -> str:
-    """Render one frontmatter value on a single answer line.
+    """Render one frontmatter key or value on a single answer line.
 
     ``frontmatter_read`` is served straight to the LLM, so the answer
-    has to carry the frontmatter itself. ``json.dumps`` (with
-    ``default=str`` for YAML-only types such as dates, and
-    ``ensure_ascii=False`` for non-ASCII) preserves the structural
-    distinction between a literal ``"\\n"`` two-character sequence and
-    an actual newline, between the string ``"null"`` and YAML ``null``,
-    and between mixed mapping key types (an int ``1`` and a string
-    ``"1"`` round-trip with their JSON-form distinction). The
-    one-key-per-line layout is enforced upstream by the caller.
+    has to carry the frontmatter itself, one ``- "key": value`` entry
+    per line. ``json.dumps`` (with ``default=str`` for YAML-only types
+    such as dates, and ``ensure_ascii=False`` for non-ASCII) keeps each
+    entry on one line and preserves the distinction between a literal
+    ``"\\n"`` two-character sequence and an actual newline, and between
+    the string ``"null"`` and YAML ``null``. Presentation limitation:
+    JSON stringifies mapping keys, so an int ``1`` and a string ``"1"``
+    both render as ``"1"`` (only the structured metadata keeps them
+    apart, and re-parsing the fragment keeps the last value). The
+    fallback covers values JSON refuses, recursive aliases included.
     """
     try:
         return json.dumps(value, ensure_ascii=False, default=str)
     except (TypeError, ValueError, RecursionError):
         return repr(value)
-
-
-def _render_key(key) -> str:
-    """Render a frontmatter key (the caller formats ``key: value`` lines).
-
-    Keys are always strings in YAML frontmatter, so they do not need
-    the json.dumps structural pinning. Return them as-is so the answer
-    reads as ``- key: value`` rather than ``- "key": value``.
-    """
-    return str(key)
 
 
 @R.register("frontmatter_read_step")
@@ -96,7 +89,7 @@ class FrontmatterReadStep(BaseStep):
             return
         self.context.response.success = True
         header = f"Read frontmatter from {probed} ({len(meta)} key(s))"
-        rendered = [f"- {_render_key(key)}: {_render_value(value)}" for key, value in meta.items()]
+        rendered = [f"- {_render_value(key)}: {_render_value(value)}" for key, value in meta.items()]
         self.context.response.answer = f"{header}:\n" + "\n".join(rendered) if rendered else f"{header}: (no keys)"
         self.context.response.metadata.update({"path": path, "exists": True, "frontmatter": meta, **resolved})
         self.logger.info(f"[{self.name}] path={path} keys={len(meta)}")

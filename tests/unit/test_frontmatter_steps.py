@@ -208,7 +208,7 @@ async def test_read_answer_carries_the_frontmatter_itself():
         store = await _make_store()
         resp = await _run(FrontmatterReadStep, store, path="notes/post")
         assert resp.success is True
-        assert resp.answer == 'Read frontmatter from notes/post.md (2 key(s)):\n- name: "n"\n- tags: ["a"]'
+        assert resp.answer == 'Read frontmatter from notes/post.md (2 key(s)):\n- "name": "n"\n- "tags": ["a"]'
         assert resp.metadata["frontmatter"] == {"name": "n", "tags": ["a"]}
         await store.close()
 
@@ -229,10 +229,10 @@ async def test_read_answer_preserves_value_structure_and_reports_empty():
         assert resp.success is True
         assert resp.answer == (
             "Read frontmatter from notes/rich.md (4 key(s)):\n"
-            '- name: "Cobalt"\n'
-            '- description: "line one line two"\n'
-            '- tags: ["a", "b"]\n'
-            '- nested: {"x": 1}'
+            '- "name": "Cobalt"\n'
+            '- "description": "line one line two"\n'
+            '- "tags": ["a", "b"]\n'
+            '- "nested": {"x": 1}'
         )
         assert resp.metadata["frontmatter"] == {
             "name": "Cobalt",
@@ -279,15 +279,16 @@ async def test_read_answer_tolerates_rich_yaml_types():
         store = await _make_store()
         resp = await _run(FrontmatterReadStep, store, path="notes/types.md")
         assert resp.success is True
-        assert resp.answer == (
-            "Read frontmatter from notes/types.md (6 key(s)):\n"
-            '- created: 2026-10-12\n'
-            '- schedule: {"1": "one", "label": "two"}\n'
-            "- tags: []\n"
-            '- aliases: ["a, b", "c"]\n'
-            '- command: "echo a  b"\n'
-            '- description: "line one\\nline two"'
-        )
+        expected_lines = [
+            "Read frontmatter from notes/types.md (6 key(s)):",
+            '- "created": "2026-10-12"',
+            '- "schedule": {"1": "one", "label": "two"}',
+            '- "tags": []',
+            '- "aliases": ["a, b", "c"]',
+            '- "command": "echo a  b"',
+            '- "description": "line one\\nline two"',
+        ]
+        assert resp.answer == "\n".join(expected_lines)
         assert resp.metadata["frontmatter"] == {
             "created": date(2026, 10, 12),
             "schedule": {1: "one", "label": "two"},
