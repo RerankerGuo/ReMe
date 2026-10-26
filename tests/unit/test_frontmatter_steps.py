@@ -311,23 +311,22 @@ async def test_read_answer_tolerates_rich_yaml_types():
     comma-joined lists / collapsed whitespace lost value boundaries. All of
     these stay successful reads with the structured ``metadata`` untouched.
     """
-    rich = (
-        "---\n"
-        "created: 2026-10-12\n"
-        "schedule:\n"
-        "  1: one\n"
-        "  label: two\n"
-        "tags: []\n"
-        "aliases:\n"
-        '  - "a, b"\n'
-        "  - c\n"
-        'command: "echo a  b"\n'
-        "description: |-\n"
-        "  line one\n"
-        "  line two\n"
-        "---\n"
-        "body\n"
-    )
+    rich = """---
+created: 2026-10-12
+schedule:
+  1: one
+  label: two
+tags: []
+aliases:
+  - "a, b"
+  - c
+command: "echo a  b"
+description: |-
+  line one
+  line two
+---
+body
+"""
     with tempfile.TemporaryDirectory() as tmp, temp_chdir(tmp):
         _seed(Path(tmp), "notes/types.md", rich)
         store = await _make_store()
@@ -361,48 +360,72 @@ async def test_read_answer_distinguishes_newline_from_literal_backslash_n():
     sequences. Review follow-up: pin the answer so this distinction
     survives future refactors.
     """
-    body = (
-        "---\n"
-        'real_newline: "line one\\nline two"\n'
-        'literal_seq: "a\\\\nb"\n'
-        "---\n"
-        "body\n"
-    )
+    body = r"""---
+real_newline: "line one\nline two"
+literal_seq: "a\\nb"
+---
+body
+"""
     with tempfile.TemporaryDirectory() as tmp, temp_chdir(tmp):
         _seed(Path(tmp), "notes/newline.md", body)
         store = await _make_store()
         resp = await _run(FrontmatterReadStep, store, path="notes/newline.md")
         assert resp.success is True
-        assert "- real_newline: \"line one\\nline two\"" in resp.answer
+        assert '- "real_newline": "line one\\nline two"' in resp.answer
         # Literal two-character \n renders as a JSON-escaped backslash-n
         # (the JSON string contains a backslash + an n).
-        assert '- literal_seq: "a\\\\nb"' in resp.answer
+        assert '- "literal_seq": "a\\\\nb"' in resp.answer
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_read_answer_escapes_multiline_keys():
+    """Keys go through the same JSON renderer as values, so a multiline
+    YAML key stays a single ``- "key": value`` entry instead of breaking
+    the one-key-per-line layout. Review finding: a key like
+    ``first\\n- forged`` used to render as two lines and look like a
+    second entry. The metadata keeps the original key.
+    """
+    body = r"""---
+"first\n- forged": "value"
+---
+body
+"""
+    with tempfile.TemporaryDirectory() as tmp, temp_chdir(tmp):
+        _seed(Path(tmp), "notes/keys.md", body)
+        store = await _make_store()
+        resp = await _run(FrontmatterReadStep, store, path="notes/keys.md")
+        assert resp.success is True
+        assert resp.answer == 'Read frontmatter from notes/keys.md (1 key(s)):\n- "first\\n- forged": "value"'
+        assert resp.metadata["frontmatter"] == {"first\n- forged": "value"}
         await store.close()
 
 
 @pytest.mark.asyncio
 async def test_read_answer_mixed_mapping_key_types_render_via_json():
-    """An int 1 and a string "1" must render with their JSON-form
-    distinction in the answer (the metadata already preserves it).
-    Review follow-up: document the round-trip caveat for callers that
-    re-parse the answer body as JSON.
+    """An int 1 and a string "1" stay distinct in YAML and in the
+    metadata, but the JSON-rendered answer collapses both keys to the
+    string "1": the fragment textually keeps both entries, while
+    re-parsing it as JSON keeps only the latter value. Documented
+    presentation limitation — the structured metadata is the source of
+    truth for key types.
     """
-    body = (
-        "---\n"
-        'mixed:\n'
-        '  1: "number"\n'
-        '  "1": "string"\n'
-        "---\n"
-        "body\n"
-    )
+    body = """---
+mixed:
+  1: "number"
+  "1": "string"
+---
+body
+"""
     with tempfile.TemporaryDirectory() as tmp, temp_chdir(tmp):
         _seed(Path(tmp), "notes/mixed_keys.md", body)
         store = await _make_store()
         resp = await _run(FrontmatterReadStep, store, path="notes/mixed_keys.md")
         assert resp.success is True
-        # json.dumps preserves int vs string in the rendered answer
-        assert '- mixed: {"1": "number", "1": "string"}' in resp.answer
+        # Both entries render textually; JSON's key coercion means a
+        # re-parser sees only the last "1". The metadata keeps the types.
+        assert '- "mixed": {"1": "number", "1": "string"}' in resp.answer
         assert resp.metadata["frontmatter"] == {
-            "mixed": {1: "number", "1": "string"}
+            "mixed": {1: "number", "1": "string"},
         }
         await store.close()
